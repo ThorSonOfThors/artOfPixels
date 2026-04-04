@@ -2,7 +2,6 @@
   <div id="app">
     <Navbar />
 
-    <!-- 🔥 MAIN CONTENT WRAPPER -->
     <main class="page">
       <router-view />
     </main>
@@ -15,27 +14,31 @@ import { supabase } from './lib/supabase'
 import { useAuthStore } from './stores/auth'
 import Navbar from './components/Navbar.vue'
 
+// ✅ import types
+import type { AuthChangeEvent, Session } from '@supabase/supabase-js'
+
 onMounted(async () => {
   const auth = useAuthStore()
 
   // initial session
   await auth.fetchUser()
 
-  // auth listener
-  supabase.auth.onAuthStateChange(async (_event, session) => {
-    auth.user = session?.user || null
+  // ✅ properly typed listener
+  supabase.auth.onAuthStateChange(
+    async (_event: AuthChangeEvent, session: Session | null) => {
+      auth.user = session?.user || null
 
-    if (auth.user) {
-      await auth.fetchProfile()
-    } else {
-      auth.username = ''
+      if (auth.user) {
+        await auth.fetchProfile()
+      } else {
+        auth.username = ''
+      }
     }
-  })
+  )
 })
 </script>
 
 <style>
-/* 🔥 Ensure App takes full space */
 #app {
   display: flex;
   flex-direction: column;
@@ -43,7 +46,6 @@ onMounted(async () => {
   width: 100%;
 }
 
-/* 🔥 Main content fills remaining space */
 .page {
   flex: 1;
   width: 100%;

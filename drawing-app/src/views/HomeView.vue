@@ -84,7 +84,7 @@ async function loadTopPicture() {
     likes_count: p.likes?.[0]?.count || 0
   }))
 
-  normalized.sort((a, b) => b.likes_count - a.likes_count)
+  normalized.sort((a: any, b: any) => b.likes_count - a.likes_count)
 
   topPicture.value = normalized[0] || null
 

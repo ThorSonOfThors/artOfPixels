@@ -6,6 +6,7 @@ import DrawView from '../views/DrawView.vue'
 import { supabase } from '../lib/supabase'
 import EditProfile from '../views/EditProfile.vue'
 import MyGallery from '../views/MyGallery.vue'
+import GalleryView from '../views/GalleryView.vue'
 
 
 
@@ -16,13 +17,9 @@ const routes = [
   { path: '/draw', component: DrawView, meta: { requiresAuth: true } },
   { path: '/edit-profile', component: EditProfile, meta: { requiresAuth: true } },
   { path: '/my-gallery', component: MyGallery, meta: { requiresAuth: true } },
-  {path: '/gallery',
-  component: () => import('../views/GalleryView.vue')},
+  { path: '/gallery', component: GalleryView },
 
-  {
-  path: '/edit/:id',
-  component: () => import('../views/DrawView.vue')
-}
+  { path: '/edit/:id', component: DrawView}
 ]
 
 const router = createRouter({

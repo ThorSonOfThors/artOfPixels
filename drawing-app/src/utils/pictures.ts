@@ -225,7 +225,7 @@ export async function getComments(pictureId: string) {
 
   if (error) throw error
 
-  return data.map(c => ({
+  return data.map((c: any) => ({
     id: c.id,
     content: c.content,
     created_at: c.created_at,
