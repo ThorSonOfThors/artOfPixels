@@ -10,7 +10,7 @@
         <!-- PREVIEW -->
         <div class="preview" @click="openPicture(pic.id)">
           <canvas
-            :ref="el => renderPreview(el, pic)"
+            :ref="el => renderPreview(el as HTMLCanvasElement | null, pic)"
             width="160"
             height="160"
           ></canvas>

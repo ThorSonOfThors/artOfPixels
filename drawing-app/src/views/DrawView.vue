@@ -1658,4 +1658,49 @@ input[type="color"] {
   border: none;
   background: none;
 }
+
+
+
+/* Minimal version - cleaner UI */
+
+
+
+/* Simple text indicators instead of pseudo-elements */
+.tool-btn.square.fill::before {
+  content: '■';
+  font-size: 20px;
+}
+
+.tool-btn.square.edge::before {
+  content: '□';
+  font-size: 20px;
+}
+
+.tool-btn.square.off::before {
+  content: '✕';
+  font-size: 20px;
+}
+
+.tool-btn.circle.fill::before {
+  content: '●';
+  font-size: 20px;
+}
+
+.tool-btn.circle.edge::before {
+  content: '○';
+  font-size: 22px;
+}
+
+.tool-btn.circle.off::before {
+  content: '✕';
+  font-size: 20px;
+}
+
+/* Active state */
+.tool-btn.square.active,
+.tool-btn.circle.active {
+  outline: 2px solid white;
+  outline-offset: 2px;
+  transform: scale(1.05);
+}
 </style>

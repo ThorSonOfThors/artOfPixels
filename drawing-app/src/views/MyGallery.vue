@@ -10,7 +10,7 @@
         <!-- PREVIEW -->
         <div class="preview" @click="openPicture(pic.id)">
           <canvas
-            :ref="el => renderPreview(el, pic)"
+            :ref="el => renderPreview(el as HTMLCanvasElement | null, pic)"
             width="160"
             height="160"
           ></canvas>
@@ -75,18 +75,15 @@
 <script setup lang="ts">
 import { ref, reactive, onMounted, watch, computed } from 'vue'
 import { useRouter } from 'vue-router'
-import { useAuthStore } from '../stores/auth'
 import {
   toggleLike,
   getComments,
   addComment,
   deletePicture
 } from '../utils/pictures'
-import { supabase } from '../lib/supabase'
 import { getMyPictures } from '../utils/pictures'
 
 const router = useRouter()
-const auth = useAuthStore()
 
 // STATE
 const pictures = ref<any[]>([])
