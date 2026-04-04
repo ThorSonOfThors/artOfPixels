@@ -1,0 +1,50 @@
+/* 🔥 FULL RESET (fix white gaps) */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* 🔥 ROOT ELEMENTS */
+html, body, #app {
+  width: 100%;
+  height: 100%;
+}
+
+/* 🔥 REMOVE DEFAULT BODY MARGIN */
+body {
+  margin: 0;
+  padding: 0;
+
+  background: #121212;
+  color: white;
+
+  font-family: 'Inter', sans-serif;
+}
+
+/* 🔥 APP LAYOUT */
+#app {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+}
+
+/* 🔥 PAGE WRAPPER */
+.page {
+  flex: 1;
+  width: 100%;
+}
+
+/* 🔥 REMOVE COMMON WIDTH LIMITS */
+.container {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+}
+
+/* 🔥 NICE FONT */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=Space+Grotesk:wght@400;600&display=swap');
+
+h1, h2, h3 {
+  font-family: 'Space Grotesk', sans-serif;
+}
