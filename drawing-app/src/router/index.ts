@@ -14,7 +14,7 @@ const routes = [
   { path: '/', component: HomeView },
   { path: '/login', component: LoginView },
   { path: '/register', component: RegisterView },
-  { path: '/draw', component: DrawView, meta: { requiresAuth: true } },
+  { path: '/draw', component: DrawView },
   { path: '/edit-profile', component: EditProfile, meta: { requiresAuth: true } },
   { path: '/my-gallery', component: MyGallery, meta: { requiresAuth: true } },
   { path: '/gallery', component: GalleryView },

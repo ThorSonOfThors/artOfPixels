@@ -1,8 +1,16 @@
 <template>
   <div class="app-container" tabindex="0" @keydown="handleKey">
 
+    <!-- Mobile menu toggle buttons -->
+    <button class="menu-toggle" @click="toggleLeftSidebar" title="Menu">☰</button>
+    <button class="right-menu-toggle" @click="toggleRightSidebar" title="Options">⚙️</button>
+
+    <!-- Sidebar overlays -->
+    <div v-if="leftSidebarOpen" class="sidebar-overlay" @click="closeSidebars"></div>
+    <div v-if="rightSidebarOpen" class="sidebar-overlay" @click="closeSidebars"></div>
+
     <!-- LEFT PANEL -->
-    <div class="sidebar left">
+    <div class="sidebar left" :class="{ open: leftSidebarOpen }">
       <h3>Grid</h3>
 
       <label title="Grid resolution">
@@ -58,12 +66,30 @@
             :class="{ active: tool === 'select' }"
             title="Select / move pixels"
           >Select</button>
-
+            
           <button 
             @click="tool = 'fill'" 
             :class="{ active: tool === 'fill' }"
             title="Fill area"
           >🧺</button>
+
+          <button
+            @click="tool = 'text'"
+            :class="{ active: tool === 'text' }"
+            title="Add text (drag to create text area)"
+          >📝 Text</button>
+
+          <button
+            @click="tool = 'magic-wand'"
+            :class="{ active: tool === 'magic-wand' }"
+            title="Magic wand - select contiguous similar colors"
+          >𝄞</button>
+
+          <button
+            @click="tool = 'spray'"
+            :class="{ active: tool === 'spray' }"
+            title="Spray can / Airbrush"
+          >⛫💨</button>
         </div>
 
         <!-- BRUSH + COLORS -->
@@ -76,9 +102,20 @@
             <button @click="brushSize++" title="Brush bigger">+</button>
           </div>
           
-          <label>Pick color:</label>
-          <input type="color" v-model="currentColor" title="Primary color" />
-          <input type="color" v-model="gradientColor" title="Gradient color" />
+          <label>Primary:</label>
+            <input type="color" v-model="currentColor" title="Primary color" />
+            
+            <!-- SWAP BUTTON -->
+            <button 
+              @click="swapColors" 
+              class="swap-btn" 
+              title="Swap colors"
+            >
+              ⇄
+            </button>
+            
+            <label>Gradient:</label>
+            <input type="color" v-model="gradientColor" title="Gradient color" />
 
           <button 
             :class="{ active: useGradient }" 
@@ -87,6 +124,27 @@
           >
             gradient 🌈
           </button>
+
+          <!-- Spray can density control -->
+          <div v-if="tool === 'spray'" class="spray-control">
+            <label>Density:</label>
+            <input type="range" v-model.number="sprayDensity" min="1" max="50" />
+            <span>{{ sprayDensity }}%</span>
+          </div>
+
+          <!-- Magic wand tolerance -->
+          <div v-if="tool === 'magic-wand'" class="tolerance-control">
+            <label>Tolerance:</label>
+            <input type="range" v-model.number="magicWandTolerance" min="0" max="100" />
+            <span>{{ magicWandTolerance }}</span>
+          </div>
+        </div>
+
+        <!-- FILTERS GROUP -->
+        <div class="tool-group">
+          <button @click="applyBlur" title="Simple blur">🔷 Blur</button>
+          <button @click="applySharpen" title="Sharpen filter">✨ Sharpen</button>
+          <button @click="applyGaussianBlur" title="Gaussian blur">🌀 Gaussian Blur</button>
         </div>
 
       </div>
@@ -113,11 +171,29 @@
         <button class="arrow" @click="moveDown">⬇️</button>
       </div>
 
+      <!-- PREVIEW WINDOW (Minimap) -->
+      <div class="preview-window" v-if="showPreviewWindow" v-show="minimapVisible">
+       
+        <canvas 
+          ref="previewCanvas" 
+          class="preview-canvas"
+          @click="jumpToPosition"
+        ></canvas>
+        <div class="preview-controls">
+          <button @click="toggleMinimap">Hide</button>
+        </div>
+      </div>
+
+      <!-- Toggle preview button -->
+      <button class="toggle-preview" @click="toggleMinimap" title="Show minimap">
+        🗺️
+      </button>
+
     </div>
 
 
     <!-- RIGHT PANEL -->
-    <div class="sidebar right">
+    <div class="sidebar right" :class="{ open: rightSidebarOpen }">
       <h3>Export</h3>
 
       <button @click="exportToPNG(grid)" title="Export PNG">PNG</button>
@@ -141,11 +217,49 @@
       <input type="file" accept="image/*" @change="onFileUpload" />
     </div>
 
+    <!-- Text Input Dialog Modal -->
+    <div v-if="showTextDialog" class="modal-overlay" @click.self="showTextDialog = false">
+      <div class="modal">
+        <h3>Enter Text</h3>
+        <textarea 
+          v-model="textInput" 
+          placeholder="Type your text here..."
+          rows="4"
+          autofocus
+        ></textarea>
+        
+        <div class="modal-controls">
+          <label>
+            Font Size:
+            <input type="number" v-model.number="textSize" min="8" max="100" />
+            <small>(0 = auto-fit)</small>
+          </label>
+          
+          <label>
+            Font:
+            <select v-model="textFont">
+              <option value="monospace">Monospace</option>
+              <option value="Arial">Arial</option>
+              <option value="Verdana">Verdana</option>
+              <option value="'Courier New'">Courier New</option>
+              <option value="'Times New Roman'">Times New Roman</option>
+              <option value="Georgia">Georgia</option>
+            </select>
+          </label>
+        </div>
+        
+        <div class="modal-buttons">
+          <button @click="submitText">Add Text</button>
+          <button @click="showTextDialog = false">Cancel</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, onMounted, watch, nextTick } from 'vue'
 import { exportToPNG, exportToFavicon } from '../utils/exportUtils'
 import { exportToSVG } from '../utils/exportSVG'
 import { savePicture } from '../utils/pictures'
@@ -159,13 +273,20 @@ const saving = ref(false)
 const saveMessage = ref('')
 
 const canvas = ref<HTMLCanvasElement | null>(null)
+const previewCanvas = ref<HTMLCanvasElement | null>(null)
 let ctx: CanvasRenderingContext2D | null = null
+let previewCtx: CanvasRenderingContext2D | null = null
 
 const CANVAS_SIZE = 600
+const PREVIEW_SIZE = 150
 
 // GRID
 const gridSize = ref(100)
 const visibleSize = ref(100)
+
+//Preview Map
+const minimapVisible = ref(true)  // Track minimap visibility
+
 
 //MOVE STROKE
 let strokePixels: { x: number; y: number; color: string }[] = []
@@ -200,9 +321,8 @@ const undoStack = ref<CanvasState[]>([])
 const redoStack = ref<CanvasState[]>([])
 
 //GRADIENT
-// Add these with your other refs
-const gradientColor = ref('#0000ff') // Second color for gradient
-const useGradient = ref(false) // Toggle gradient mode
+const gradientColor = ref('#0000ff')
+const useGradient = ref(false)
 const originalSelectionStart = ref<{ x: number; y: number } | null>(null)
 
 // OFFSET
@@ -213,13 +333,26 @@ const offsetY = ref(0)
 const drawing = ref(false)
 const currentColor = ref('#000000')
 
+// PREVIEW WINDOW
+const showPreviewWindow = ref(true)
+
+// SPRAY CAN
+const sprayDensity = ref(20)
+// Spray
+let sprayPreviewPixels: { x: number; y: number; color: string }[] = []  // ← ADD THIS LINE
+
+// MAGIC WAND
+const magicWandTolerance = ref(30)
 
 // 🔥 UNIFIED TOOL
 const tool = ref<
   | 'pencil'
   | 'fill'
+  | 'text'
   | 'select'
   | 'line'
+  | 'magic-wand'
+  | 'spray'
   | 'square-fill' | 'square-edge' | 'square-off'
   | 'circle-fill' | 'circle-edge' | 'circle-off'
 >('pencil')
@@ -234,6 +367,34 @@ const selectionEnd = ref<{ x: number; y: number } | null>(null)
 // DATA
 const grid = ref<string[][]>([])
 
+// TEXT TOOL STATE
+const showTextDialog = ref(false)
+const textInput = ref('')
+const textPosition = ref<{ x1: number; y1: number; x2: number; y2: number } | null>(null)
+const textSize = ref(16)
+const textFont = ref('monospace')
+const tempTextRect = ref<{ start: { x: number; y: number }, end: { x: number; y: number } } | null>(null)
+
+
+// Add these refs with your other refs
+const leftSidebarOpen = ref(false)
+const rightSidebarOpen = ref(false)
+
+// Add these functions
+function toggleLeftSidebar() {
+  leftSidebarOpen.value = !leftSidebarOpen.value
+}
+
+function toggleRightSidebar() {
+  rightSidebarOpen.value = !rightSidebarOpen.value
+}
+
+function closeSidebars() {
+  leftSidebarOpen.value = false
+  rightSidebarOpen.value = false
+}
+
+
 //SAVE HELPERS
 async function handleSave() {
   try {
@@ -241,13 +402,11 @@ async function handleSave() {
     saveMessage.value = ''
 
     if (pictureId.value) {
-      // 🔥 UPDATE existing
       await updatePicture(pictureId.value, grid.value)
       saveMessage.value = '✅ Updated'
     } else {
-      // 🔥 CREATE new
       const newPic = await savePicture(grid.value)
-      pictureId.value = newPic.id // now becomes edit mode
+      pictureId.value = newPic.id
       saveMessage.value = '✅ Saved'
     }
 
@@ -259,33 +418,40 @@ async function handleSave() {
   }
 }
 
+//SWAP COLORS
+function swapColors() {
+  const tempColor = currentColor.value
+  const tempGradient = gradientColor.value
+  
+  currentColor.value = tempGradient
+  gradientColor.value = tempColor
+  
+  saveMessage.value = '🔄 Colors swapped'
+  setTimeout(() => {
+    if (saveMessage.value === '🔄 Colors swapped') {
+      saveMessage.value = ''
+    }
+  }, 1500)
+}
 
-//GRADIENT HELPER
-// Helper function to interpolate between two colors
-
-// Helper function to calculate gradient factor based on start and end points
+// Helper function to calculate gradient factor
 function calculateGradientFactor(
   x: number, 
   y: number, 
   start: { x: number, y: number }, 
   end: { x: number, y: number }
 ): number {
-  // Calculate the vector from start to end
   const dx = end.x - start.x
   const dy = end.y - start.y
   
-  // If the selection is just a point, return 0
   if (dx === 0 && dy === 0) return 0
   
-  // Calculate the vector from start to current point
   const px = x - start.x
   const py = y - start.y
   
-  // Project the point onto the line from start to end
   const dotProduct = px * dx + py * dy
   const squaredLength = dx * dx + dy * dy
   
-  // Clamp t between 0 and 1
   let t = dotProduct / squaredLength
   t = Math.min(1, Math.max(0, t))
   
@@ -293,7 +459,6 @@ function calculateGradientFactor(
 }
 
 function interpolateColor(color1: string, color2: string, t: number): string {
-  // Parse hex colors to RGB
   const hexToRgb = (hex: string) => {
     const r = parseInt(hex.slice(1, 3), 16)
     const g = parseInt(hex.slice(3, 5), 16)
@@ -304,18 +469,14 @@ function interpolateColor(color1: string, color2: string, t: number): string {
   const rgb1 = hexToRgb(color1)
   const rgb2 = hexToRgb(color2)
   
-  // Interpolate each channel
   const r = Math.round(rgb1.r + (rgb2.r - rgb1.r) * t)
   const g = Math.round(rgb1.g + (rgb2.g - rgb1.g) * t)
   const b = Math.round(rgb1.b + (rgb2.b - rgb1.b) * t)
   
-  // Convert back to hex
   return `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
 }
 
-
 //UNDO REDO
-
 function clonePixels<T>(arr: T[]): T[] {
   return arr.map(p => ({ ...p }))
 }
@@ -350,8 +511,6 @@ function applyState(state: CanvasState) {
     : null
 }
 
-
-
 function cloneGrid(src: string[][]) {
   return src.map(row => [...row])
 }
@@ -366,7 +525,6 @@ function saveState() {
   redoStack.value = []
 }
 
-
 function undo() {
   if (undoStack.value.length === 0) return
 
@@ -378,8 +536,8 @@ function undo() {
   applyState(prev)
 
   redraw()
+  updatePreview()
 }
-
 
 function redo() {
   if (redoStack.value.length === 0) return
@@ -392,9 +550,25 @@ function redo() {
   applyState(next)
 
   redraw()
+  updatePreview()
 }
 
-
+//MAP PREVIEW HELPER
+// Toggle minimap visibility and force redraw
+function toggleMinimap() {
+  showPreviewWindow.value = !showPreviewWindow.value
+  
+  // Force preview to redraw when showing
+  if (showPreviewWindow.value) {
+    setTimeout(() => {
+      // Re-get the canvas context
+      if (previewCanvas.value) {
+        previewCtx = previewCanvas.value.getContext('2d')
+        updatePreview()
+      }
+    }, 50)
+  }
+}
 
 // 🔥 TOOL HELPERS
 function isActive(base: 'pencil' | 'square' | 'circle') {
@@ -462,9 +636,10 @@ function resizeGrid(newSize: number) {
 }
 
 // DRAW PIXEL
-function drawPixel(gx: number, gy: number) {
+function drawPixel(gx: number, gy: number, color?: string) {
   const r = (brushSize.value - 0.5) / 2
   const rSquared = r * r
+  const useColor = color || currentColor.value
 
   for (let dy = -brushSize.value + 1; dy < brushSize.value; dy++) {
     for (let dx = -brushSize.value + 1; dx < brushSize.value; dx++) {
@@ -480,10 +655,230 @@ function drawPixel(gx: number, gy: number) {
         x < gridSize.value &&
         y < gridSize.value
       ) {
-        strokePixels.push({ x, y, color: currentColor.value })
+        strokePixels.push({ x, y, color: useColor })
       }
     }
   }
+}
+
+function updateSprayPreview(gx: number, gy: number) {
+  sprayPreviewPixels = []
+  const radius = brushSize.value
+  const density = sprayDensity.value / 100
+  
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      if (distance <= radius && Math.random() < density) {
+        const x = gx + dx
+        const y = gy + dy
+        if (x >= 0 && y >= 0 && x < gridSize.value && y < gridSize.value) {
+          sprayPreviewPixels.push({ x, y, color: currentColor.value })
+        }
+      }
+    }
+  }
+}
+
+
+function applySprayPixelImmediately(gx: number, gy: number) {
+  const radius = brushSize.value
+  const density = sprayDensity.value / 100
+  
+  for (let dy = -radius; dy <= radius; dy++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      const distance = Math.sqrt(dx * dx + dy * dy)
+      if (distance <= radius && Math.random() < density) {
+        const x = gx + dx
+        const y = gy + dy
+        if (x >= 0 && y >= 0 && x < gridSize.value && y < gridSize.value) {
+          // Apply DIRECTLY to grid (immediate)
+          grid.value[y][x] = currentColor.value
+          // Also store for undo/redo
+          strokePixels.push({ x, y, color: currentColor.value })
+        }
+      }
+    }
+  }
+}
+
+// MAGIC WAND SELECTION
+function magicWandSelect(startX: number, startY: number) {
+  const targetColor = grid.value[startY][startX]
+  const queue: [number, number][] = [[startX, startY]]
+  const visited = new Set<string>()
+  const selected: { x: number; y: number; color: string }[] = []
+
+  while (queue.length > 0) {
+    const [x, y] = queue.shift()!
+    const key = `${x},${y}`
+
+    if (x < 0 || y < 0 || x >= gridSize.value || y >= gridSize.value) continue
+    if (visited.has(key)) continue
+
+    const currentColorHex = grid.value[y][x]
+    
+    // Check color similarity with tolerance
+    const targetRgb = hexToRgb(targetColor)
+    const currentRgb = hexToRgb(currentColorHex)
+    const diff = Math.sqrt(
+      Math.pow(targetRgb.r - currentRgb.r, 2) +
+      Math.pow(targetRgb.g - currentRgb.g, 2) +
+      Math.pow(targetRgb.b - currentRgb.b, 2)
+    )
+    const maxDiff = Math.sqrt(3 * 255 * 255) // Max possible difference
+    const similarity = 1 - (diff / maxDiff)
+    
+    if (similarity * 100 >= (100 - magicWandTolerance.value)) {
+      visited.add(key)
+      selected.push({ x, y, color: currentColorHex })
+      queue.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1])
+    }
+  }
+
+  // Store selection
+  activePixels = selected
+  backgroundPixels = selected.map(p => ({
+    x: p.x,
+    y: p.y,
+    color: '#ffffff'
+  }))
+  
+  redraw()
+}
+
+function hexToRgb(hex: string) {
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return { r, g, b }
+}
+
+// FILTERS
+function applyBlur() {
+  saveState()
+  const newGrid = cloneGrid(grid.value)
+  const size = gridSize.value
+  
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let r = 0, g = 0, b = 0, count = 0
+      
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+            const color = grid.value[ny][nx]
+            const rgb = hexToRgb(color)
+            r += rgb.r
+            g += rgb.g
+            b += rgb.b
+            count++
+          }
+        }
+      }
+      
+      r = Math.floor(r / count)
+      g = Math.floor(g / count)
+      b = Math.floor(b / count)
+      newGrid[y][x] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
+    }
+  }
+  
+  grid.value = newGrid
+  redraw()
+  updatePreview()
+}
+
+function applySharpen() {
+  saveState()
+  const newGrid = cloneGrid(grid.value)
+  const size = gridSize.value
+  const kernel = [
+    [0, -1, 0],
+    [-1, 5, -1],
+    [0, -1, 0]
+  ]
+  
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let r = 0, g = 0, b = 0
+      
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+            const color = grid.value[ny][nx]
+            const rgb = hexToRgb(color)
+            const k = kernel[dy + 1][dx + 1]
+            r += rgb.r * k
+            g += rgb.g * k
+            b += rgb.b * k
+          }
+        }
+      }
+      
+      r = Math.min(255, Math.max(0, r))
+      g = Math.min(255, Math.max(0, g))
+      b = Math.min(255, Math.max(0, b))
+      newGrid[y][x] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
+    }
+  }
+  
+  grid.value = newGrid
+  redraw()
+  updatePreview()
+}
+
+function applyGaussianBlur() {
+  saveState()
+  const newGrid = cloneGrid(grid.value)
+  const size = gridSize.value
+  const kernel = [
+    [1, 2, 1],
+    [2, 4, 2],
+    [1, 2, 1]
+  ]
+  const kernelSum = 16
+  
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      let r = 0, g = 0, b = 0
+      
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx
+          const ny = y + dy
+          if (nx >= 0 && nx < size && ny >= 0 && ny < size) {
+            const color = grid.value[ny][nx]
+            const rgb = hexToRgb(color)
+            const k = kernel[dy + 1][dx + 1]
+            r += rgb.r * k
+            g += rgb.g * k
+            b += rgb.b * k
+          } else {
+            const color = grid.value[y][x]
+            const rgb = hexToRgb(color)
+            const k = kernel[dy + 1][dx + 1]
+            r += rgb.r * k
+            g += rgb.g * k
+            b += rgb.b * k
+          }
+        }
+      }
+      
+      r = Math.floor(r / kernelSum)
+      g = Math.floor(g / kernelSum)
+      b = Math.floor(b / kernelSum)
+      newGrid[y][x] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
+    }
+  }
+  
+  grid.value = newGrid
+  redraw()
+  updatePreview()
 }
 
 //LINE
@@ -502,13 +897,9 @@ function getLinePixels(x0: number, y0: number, x1: number, y1: number) {
   const rSquared = r * r
 
   while (true) {
-
-    // brush (circle)
     for (let by = -brushSize.value + 1; by < brushSize.value; by++) {
       for (let bx = -brushSize.value + 1; bx < brushSize.value; bx++) {
-
         if (bx * bx + by * by > rSquared) continue
-
         pixels.push({
           x: x0 + bx,
           y: y0 + by,
@@ -552,23 +943,19 @@ function applyPixels(pixels: { x: number; y: number; color: string }[]) {
 function moveActivePixels(dx: number, dy: number) {
   if (activePixels.length === 0) return
 
-  // 🔥 restore what was underneath
   restoreBackground()
 
-  // move pixels
   for (const p of activePixels) {
     p.x += dx
     p.y += dy
   }
 
-  // 🔥 capture NEW background at new location
   backgroundPixels = activePixels.map(p => ({
     x: p.x,
     y: p.y,
     color: grid.value[p.y]?.[p.x] || '#ffffff'
   }))
 
-  // draw again
   applyPixels(activePixels)
 
   redraw()
@@ -587,66 +974,41 @@ function restoreBackground() {
   }
 }
 
-
 //FILL
-// Gradient Flood Fill
 function gradientFloodFill(startX: number, startY: number) {
   const targetColor = grid.value[startY][startX]
   const startColor = currentColor.value
   const endColor = gradientColor.value
 
-  // Nothing to do if target is already the start color and we're not doing gradient
   if (!useGradient.value && targetColor === startColor) return
   if (useGradient.value && targetColor === startColor && startColor === endColor) return
 
-  const queue: [number, number, number][] = [] // [x, y, distance]
-  queue.push([startX, startY, 0])
-  
+  const queue: [number, number, number][] = [[startX, startY, 0]]
   const visited = new Set<string>()
-  const maxDistance = Math.max(gridSize.value, gridSize.value) // Maximum possible distance
+  const maxDistance = Math.max(gridSize.value, gridSize.value)
 
   while (queue.length > 0) {
     const [x, y, distance] = queue.shift()!
     const key = `${x},${y}`
 
-    // bounds check
-    if (
-      x < 0 ||
-      y < 0 ||
-      x >= gridSize.value ||
-      y >= gridSize.value
-    ) continue
-
-    // only fill matching color
+    if (x < 0 || y < 0 || x >= gridSize.value || y >= gridSize.value) continue
     if (grid.value[y][x] !== targetColor) continue
-    
-    // Avoid revisiting
     if (visited.has(key)) continue
     visited.add(key)
 
-    // Calculate gradient factor based on distance from start point
     let t: number
     if (useGradient.value) {
-      // Normalize distance to a value between 0 and 1
-      // We use a radial gradient that spreads outward
       t = Math.min(1, distance / maxDistance)
-      
-      // Optional: Add easing for smoother transition
-      // t = Math.sin(t * Math.PI / 2) // Ease out
-      // t = 1 - Math.pow(1 - t, 2) // Quadratic ease out
     } else {
-      t = 0 // No gradient, use start color
+      t = 0
     }
     
-    // Interpolate between start and end color
     const color = useGradient.value 
       ? interpolateColor(startColor, endColor, t)
       : startColor
     
-    // paint
     grid.value[y][x] = color
 
-    // 4-direction BFS with distance tracking
     queue.push([x + 1, y, distance + 1])
     queue.push([x - 1, y, distance + 1])
     queue.push([x, y + 1, distance + 1])
@@ -658,30 +1020,18 @@ function floodFill(startX: number, startY: number) {
   const targetColor = grid.value[startY][startX]
   const replacementColor = currentColor.value
 
-  // ✅ nothing to do
   if (targetColor === replacementColor) return
 
-  const queue: [number, number][] = []
-  queue.push([startX, startY])
+  const queue: [number, number][] = [[startX, startY]]
 
   while (queue.length > 0) {
     const [x, y] = queue.shift()!
 
-    // bounds check
-    if (
-      x < 0 ||
-      y < 0 ||
-      x >= gridSize.value ||
-      y >= gridSize.value
-    ) continue
-
-    // only fill matching color
+    if (x < 0 || y < 0 || x >= gridSize.value || y >= gridSize.value) continue
     if (grid.value[y][x] !== targetColor) continue
 
-    // paint
     grid.value[y][x] = replacementColor
 
-    // 4-direction BFS
     queue.push([x + 1, y])
     queue.push([x - 1, y])
     queue.push([x, y + 1])
@@ -689,13 +1039,137 @@ function floodFill(startX: number, startY: number) {
   }
 }
 
+// TEXT TOOL FUNCTIONS
+function renderTextToGrid(
+  text: string, 
+  x1: number, 
+  y1: number, 
+  x2: number, 
+  y2: number
+) {
+  if (!text.trim()) return
+
+  const rectX = Math.min(x1, x2)
+  const rectY = Math.min(y1, y2)
+  const rectWidth = Math.abs(x2 - x1) + 1
+  const rectHeight = Math.abs(y2 - y1) + 1
+
+  const offscreenCanvas = document.createElement('canvas')
+  offscreenCanvas.width = rectWidth
+  offscreenCanvas.height = rectHeight
+  const offscreenCtx = offscreenCanvas.getContext('2d')
+  
+  if (!offscreenCtx) return
+
+  let fontSize = textSize.value
+  let fit = false
+  
+  if (textSize.value === 0) {
+    fontSize = Math.min(rectWidth, rectHeight) * 0.8
+    while (!fit && fontSize > 8) {
+      offscreenCtx.font = `${fontSize}px ${textFont.value}`
+      const metrics = offscreenCtx.measureText(text)
+      if (metrics.width <= rectWidth && fontSize <= rectHeight) {
+        fit = true
+      } else {
+        fontSize -= 2
+      }
+    }
+  }
+
+  offscreenCtx.clearRect(0, 0, rectWidth, rectHeight)
+  offscreenCtx.font = `${fontSize}px ${textFont.value}`
+  offscreenCtx.fillStyle = currentColor.value
+  offscreenCtx.textBaseline = 'middle'
+  offscreenCtx.textAlign = 'center'
+  offscreenCtx.fillText(text, rectWidth / 2, rectHeight / 2)
+
+  const imageData = offscreenCtx.getImageData(0, 0, rectWidth, rectHeight)
+  const data = imageData.data
+
+  const backgroundPixelsToSave: { x: number; y: number; color: string }[] = []
+
+  for (let y = 0; y < rectHeight; y++) {
+    for (let x = 0; x < rectWidth; x++) {
+      const pixelIndex = (y * rectWidth + x) * 4
+      const alpha = data[pixelIndex + 3]
+      
+      const gridX = rectX + x
+      const gridY = rectY + y
+      
+      if (gridX >= 0 && gridX < gridSize.value && 
+          gridY >= 0 && gridY < gridSize.value) {
+        
+        if (alpha > 10) {
+          const existingBackground = backgroundPixelsToSave.find(
+            p => p.x === gridX && p.y === gridY
+          )
+          if (!existingBackground) {
+            backgroundPixelsToSave.push({
+              x: gridX,
+              y: gridY,
+              color: grid.value[gridY][gridX]
+            })
+          }
+          
+          const r = data[pixelIndex]
+          const g = data[pixelIndex + 1]
+          const b = data[pixelIndex + 2]
+          const alphaFactor = alpha / 255
+          
+          if (alphaFactor < 1) {
+            const bgColor = grid.value[gridY][gridX]
+            const bgR = parseInt(bgColor.slice(1, 3), 16)
+            const bgG = parseInt(bgColor.slice(3, 5), 16)
+            const bgB = parseInt(bgColor.slice(5, 7), 16)
+            
+            const blendedR = Math.round(r * alphaFactor + bgR * (1 - alphaFactor))
+            const blendedG = Math.round(g * alphaFactor + bgG * (1 - alphaFactor))
+            const blendedB = Math.round(b * alphaFactor + bgB * (1 - alphaFactor))
+            
+            grid.value[gridY][gridX] = `#${((1 << 24) + (blendedR << 16) + (blendedG << 8) + blendedB).toString(16).slice(1)}`
+          } else {
+            grid.value[gridY][gridX] = `#${((1 << 24) + (r << 16) + (g << 8) + b).toString(16).slice(1)}`
+          }
+        }
+      }
+    }
+  }
+
+  backgroundPixels = backgroundPixelsToSave
+  activePixels = []
+
+  for (let y = rectY; y <= rectY + rectHeight - 1; y++) {
+    for (let x = rectX; x <= rectX + rectWidth - 1; x++) {
+      if (x >= 0 && x < gridSize.value && y >= 0 && y < gridSize.value) {
+        activePixels.push({
+          x, y,
+          color: grid.value[y][x]
+        })
+      }
+    }
+  }
+}
+
+function submitText() {
+  if (textInput.value.trim() && textPosition.value) {
+    const { x1, y1, x2, y2 } = textPosition.value
+    renderTextToGrid(textInput.value, x1, y1, x2, y2)
+    redraw()
+    updatePreview()
+  }
+  
+  showTextDialog.value = false
+  textInput.value = ''
+  textPosition.value = null
+}
 
 //ADD IMAGE
 function onFileUpload(e: Event) {
   const file = (e.target as HTMLInputElement).files?.[0]
   if (!file) return
 
-  saveState() // 🔥 important (undo support)
+  saveState()
   importImageToViewport(file)
 }
 
@@ -708,7 +1182,6 @@ function rgbToHex(r: number, g: number, b: number) {
   )
 }
 
-
 function importImageToViewport(file: File) {
   const img = new Image()
   const reader = new FileReader()
@@ -720,7 +1193,6 @@ function importImageToViewport(file: File) {
   img.onload = () => {
     const size = visibleSize.value
 
-    // offscreen canvas = ONLY visible area
     const canvas = document.createElement('canvas')
     canvas.width = size
     canvas.height = size
@@ -728,27 +1200,18 @@ function importImageToViewport(file: File) {
     const ctx = canvas.getContext('2d')
     if (!ctx) return
 
-    // optional: preserve pixel sharpness
     ctx.imageSmoothingEnabled = false
-
-    // scale image into visible window
     ctx.drawImage(img, 0, 0, size, size)
 
     const imageData = ctx.getImageData(0, 0, size, size)
     const data = imageData.data
 
-    // 🔥 write ONLY into visible part of grid
     for (let y = 0; y < size; y++) {
       for (let x = 0; x < size; x++) {
         const gx = x + offsetX.value
         const gy = y + offsetY.value
 
-        if (
-          gx < 0 ||
-          gy < 0 ||
-          gx >= gridSize.value ||
-          gy >= gridSize.value
-        ) continue
+        if (gx < 0 || gy < 0 || gx >= gridSize.value || gy >= gridSize.value) continue
 
         const i = (y * size + x) * 4
 
@@ -766,11 +1229,11 @@ function importImageToViewport(file: File) {
     }
 
     redraw()
+    updatePreview()
   }
 
   reader.readAsDataURL(file)
 }
-
 
 // SHAPES
 function applyShape() {
@@ -803,86 +1266,63 @@ function applyShape() {
 
       if (!inside) continue
 
-if (getMode() === 'fill') {
-  let color = currentColor.value
-  
-  // Calculate gradient color if enabled
-  if (useGradient.value) {
-    let t: number
-    
-    if (getShape() === 'square') {
-      // ✅ Use directional gradient based on start and end points
-      if (originalSelectionStart.value && selectionEnd.value) {
-        t = calculateGradientFactor(x, y, originalSelectionStart.value, selectionEnd.value)
-      } else {
-        // Fallback to left-to-right if original selection is not available
-        t = (x - x1) / (x2 - x1)
-      }
-    } else {
-      // Radial gradient from center for circle
-      const dxCenter = (x - cx) / (rx || 1)
-      const dyCenter = (y - cy) / (ry || 1)
-      const dist = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter)
-      t = Math.min(1, Math.max(0, dist))
-    }
-    
-    color = interpolateColor(currentColor.value, gradientColor.value, t)
-  }
-  
-  pixels.push({ x, y, color })
-}
-
-      else if (getMode() === 'edge') {
+      if (getMode() === 'fill') {
+        let color = currentColor.value
+        
+        if (useGradient.value) {
+          let t: number
+          
+          if (getShape() === 'square') {
+            if (originalSelectionStart.value && selectionEnd.value) {
+              t = calculateGradientFactor(x, y, originalSelectionStart.value, selectionEnd.value)
+            } else {
+              t = (x - x1) / (x2 - x1)
+            }
+          } else {
+            const dxCenter = (x - cx) / (rx || 1)
+            const dyCenter = (y - cy) / (ry || 1)
+            const dist = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter)
+            t = Math.min(1, Math.max(0, dist))
+          }
+          
+          color = interpolateColor(currentColor.value, gradientColor.value, t)
+        }
+        
+        pixels.push({ x, y, color })
+      } else if (getMode() === 'edge') {
         let isEdge = false
 
         if (getShape() === 'square') {
           const thickness = brushSize.value
-
-          isEdge =
-            x - x1 < thickness ||
-            x2 - x < thickness ||
-            y - y1 < thickness ||
-            y2 - y < thickness
-        }
-
-        else {
+          isEdge = x - x1 < thickness || x2 - x < thickness || y - y1 < thickness || y2 - y < thickness
+        } else {
           const dx = (x - cx) / (rx || 1)
           const dy = (y - cy) / (ry || 1)
           const dist = dx * dx + dy * dy
-
           const thickness = brushSize.value / Math.max(rx, ry)
           isEdge = Math.abs(dist - 1) <= thickness
         }
 
         if (isEdge) {
           let color = currentColor.value
-          
-          // For edge mode, you might want gradient along the edge
-          // Calculate gradient color if enabled
-            if (useGradient.value && originalSelectionStart.value && selectionEnd.value) {
-              let t: number
-              
-              if (getShape() === 'square') {
-                // Use directional gradient based on start and end points
-                t = calculateGradientFactor(x, y, originalSelectionStart.value, selectionEnd.value)
-              } else {
-                // Radial gradient from center for circle
-                const dxCenter = (x - cx) / (rx || 1)
-                const dyCenter = (y - cy) / (ry || 1)
-                const dist = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter)
-                t = Math.min(1, Math.max(0, dist))
-              }
-              
-              color = interpolateColor(currentColor.value, gradientColor.value, t)
+          if (useGradient.value && originalSelectionStart.value && selectionEnd.value) {
+            let t: number
+            if (getShape() === 'square') {
+              t = calculateGradientFactor(x, y, originalSelectionStart.value, selectionEnd.value)
+            } else {
+              const dxCenter = (x - cx) / (rx || 1)
+              const dyCenter = (y - cy) / (ry || 1)
+              const dist = Math.sqrt(dxCenter * dxCenter + dyCenter * dyCenter)
+              t = Math.min(1, Math.max(0, dist))
             }
-          
+            color = interpolateColor(currentColor.value, gradientColor.value, t)
+          }
           pixels.push({ x, y, color })
         }
       }
     }
   }
 
-  // Apply the pixels
   backgroundPixels = pixels.map(p => ({
     x: p.x,
     y: p.y,
@@ -891,6 +1331,53 @@ if (getMode() === 'fill') {
 
   applyPixels(pixels)
   activePixels = pixels
+}
+
+// PREVIEW WINDOW (Minimap)
+function updatePreview() {
+  if (!previewCtx || !previewCanvas.value) return
+  
+  const previewSize = PREVIEW_SIZE
+  const gridW = gridSize.value
+  const gridH = gridSize.value
+  
+  previewCanvas.value.width = previewSize
+  previewCanvas.value.height = previewSize
+  previewCtx.clearRect(0, 0, previewSize, previewSize)
+  
+  const cellW = previewSize / gridW
+  const cellH = previewSize / gridH
+  
+  for (let y = 0; y < gridH; y++) {
+    for (let x = 0; x < gridW; x++) {
+      previewCtx.fillStyle = grid.value[y]?.[x] || '#ffffff'
+      previewCtx.fillRect(x * cellW, y * cellH, cellW, cellH)
+    }
+  }
+  
+  // Draw viewport rectangle
+  const viewX = offsetX.value * cellW
+  const viewY = offsetY.value * cellW
+  const viewW = visibleSize.value * cellW
+  const viewH = visibleSize.value * cellH
+  
+  previewCtx.strokeStyle = 'red'
+  previewCtx.lineWidth = 2
+  previewCtx.strokeRect(viewX, viewY, viewW, viewH)
+}
+
+function jumpToPosition(e: MouseEvent) {
+  if (!previewCanvas.value) return
+  
+  const rect = previewCanvas.value.getBoundingClientRect()
+  const x = (e.clientX - rect.left) / rect.width
+  const y = (e.clientY - rect.top) / rect.height
+  
+  offsetX.value = Math.floor(x * gridSize.value - visibleSize.value / 2)
+  offsetY.value = Math.floor(y * gridSize.value - visibleSize.value / 2)
+  
+  clampOffset()
+  redraw()
 }
 
 // REDRAW
@@ -913,9 +1400,7 @@ function redraw() {
     }
   }
 
-
-  // ===== PREVIEW =====
-  //Select Previewx
+  // Select Preview
   if (tool.value === 'select' && selectionStart.value && selectionEnd.value) {
     const x1 = Math.min(selectionStart.value.x, selectionEnd.value.x)
     const x2 = Math.max(selectionStart.value.x, selectionEnd.value.x)
@@ -925,8 +1410,6 @@ function redraw() {
     ctx.strokeStyle = 'blue'
     ctx.lineWidth = 2
 
-    const pixelSize = CANVAS_SIZE / visibleSize.value
-
     ctx.strokeRect(
       (x1 - offsetX.value) * pixelSize,
       (y1 - offsetY.value) * pixelSize,
@@ -935,193 +1418,139 @@ function redraw() {
     )
   }
 
-  // ===== PENCIL PREVIEW =====
-  if (
-    drawing.value &&
-    getShape() === 'pencil' &&
-    strokePixels.length > 0
-  ) {
-    ctx.fillStyle = currentColor.value // or currentColor with alpha
-
-    for (const p of strokePixels) {
-      const vx = p.x - offsetX.value
-      const vy = p.y - offsetY.value
-
-      // skip offscreen
-      if (
-        vx < 0 ||
-        vy < 0 ||
-        vx >= visibleSize.value ||
-        vy >= visibleSize.value
-      ) continue
-
-      ctx.fillRect(
-        vx * pixelSize,
-        vy * pixelSize,
-        pixelSize,
-        pixelSize
-      )
-    }
-  }
-// ===== LINE PREVIEW (pixel-perfect) =====
-if (
-  tool.value === 'line' &&
-  selectionStart.value &&
-  selectionEnd.value
-) {
-  ctx.fillStyle = 'rgba(0,0,255,0.4)'
-
-  let x0 = selectionStart.value.x
-  let y0 = selectionStart.value.y
-  let x1 = selectionEnd.value.x
-  let y1 = selectionEnd.value.y
-
-  const dx = Math.abs(x1 - x0)
-  const dy = Math.abs(y1 - y0)
-
-  const sx = x0 < x1 ? 1 : -1
-  const sy = y0 < y1 ? 1 : -1
-
-  let err = dx - dy
-
-  const r = (brushSize.value - 0.5) / 2
-  const rSquared = r * r
-
-  while (true) {
-
-    // ===== BRUSH (circle) =====
-    for (let by = -brushSize.value + 1; by < brushSize.value; by++) {
-      for (let bx = -brushSize.value + 1; bx < brushSize.value; bx++) {
-
-        // circular brush mask
-        if (bx * bx + by * by > rSquared) continue
-
-        const px = x0 + bx
-        const py = y0 + by
-
-        const vx = px - offsetX.value
-        const vy = py - offsetY.value
-
-        // skip offscreen
-        if (
-          vx < 0 ||
-          vy < 0 ||
-          vx >= visibleSize.value ||
-          vy >= visibleSize.value
-        ) continue
-
-        ctx.fillRect(
-          vx * pixelSize,
-          vy * pixelSize,
-          pixelSize,
-          pixelSize
-        )
-      }
-    }
-
-    if (x0 === x1 && y0 === y1) break
-
-    const e2 = 2 * err
-
-    if (e2 > -dy) {
-      err -= dy
-      x0 += sx
-    }
-
-    if (e2 < dx) {
-      err += dx
-      y0 += sy
-    }
-  }
-
-  return // 🔥 prevent other preview logic
-}
-
-
-  // ===== SHAPE PREVIEW =====
-  if (
-    selectionStart.value &&
-    selectionEnd.value &&
-    getShape() !== 'pencil' &&
-    getMode() !== 'off'
-  ) {
+  // Text Preview
+  if (tool.value === 'text' && selectionStart.value && selectionEnd.value) {
     const x1 = Math.min(selectionStart.value.x, selectionEnd.value.x)
     const x2 = Math.max(selectionStart.value.x, selectionEnd.value.x)
     const y1 = Math.min(selectionStart.value.y, selectionEnd.value.y)
     const y2 = Math.max(selectionStart.value.y, selectionEnd.value.y)
 
+    ctx.strokeStyle = 'green'
+    ctx.lineWidth = 2
+    ctx.setLineDash([5, 5])
+
+    ctx.strokeRect(
+      (x1 - offsetX.value) * pixelSize,
+      (y1 - offsetY.value) * pixelSize,
+      (x2 - x1 + 1) * pixelSize,
+      (y2 - y1 + 1) * pixelSize
+    )
+    
+    ctx.setLineDash([])
+  }
+
+  // Pencil Preview
+  if (drawing.value && getShape() === 'pencil' && strokePixels.length > 0) {
+    ctx.fillStyle = currentColor.value
+
+    for (const p of strokePixels) {
+      const vx = p.x - offsetX.value
+      const vy = p.y - offsetY.value
+
+      if (vx < 0 || vy < 0 || vx >= visibleSize.value || vy >= visibleSize.value) continue
+
+      ctx.fillRect(vx * pixelSize, vy * pixelSize, pixelSize, pixelSize)
+    }
+  }
+
+
+  // ===== SPRAY PREVIEW =====
+  if (drawing.value && tool.value === 'spray' && sprayPreviewPixels.length > 0) {
+    ctx.globalAlpha = 0.5  // Semi-transparent preview
+    
+    for (const p of sprayPreviewPixels) {
+      const vx = p.x - offsetX.value
+      const vy = p.y - offsetY.value
+      
+      if (vx >= 0 && vy >= 0 && vx < visibleSize.value && vy < visibleSize.value) {
+        ctx.fillStyle = currentColor.value
+        ctx.fillRect(vx * pixelSize, vy * pixelSize, pixelSize, pixelSize)
+      }
+    }
+    
+    ctx.globalAlpha = 1.0  // Reset opacity
+  }
+  
+  // Line Preview
+  if (tool.value === 'line' && selectionStart.value && selectionEnd.value) {
+    ctx.fillStyle = 'rgba(0,0,255,0.4)'
+
+    let x0 = selectionStart.value.x
+    let y0 = selectionStart.value.y
+    let x1 = selectionEnd.value.x
+    let y1 = selectionEnd.value.y
+
+    const dx = Math.abs(x1 - x0)
+    const dy = Math.abs(y1 - y0)
+    const sx = x0 < x1 ? 1 : -1
+    const sy = y0 < y1 ? 1 : -1
+    let err = dx - dy
+    const r = (brushSize.value - 0.5) / 2
+    const rSquared = r * r
+
+    while (true) {
+      for (let by = -brushSize.value + 1; by < brushSize.value; by++) {
+        for (let bx = -brushSize.value + 1; bx < brushSize.value; bx++) {
+          if (bx * bx + by * by > rSquared) continue
+          const px = x0 + bx
+          const py = y0 + by
+          const vx = px - offsetX.value
+          const vy = py - offsetY.value
+          if (vx < 0 || vy < 0 || vx >= visibleSize.value || vy >= visibleSize.value) continue
+          ctx.fillRect(vx * pixelSize, vy * pixelSize, pixelSize, pixelSize)
+        }
+      }
+      if (x0 === x1 && y0 === y1) break
+      const e2 = 2 * err
+      if (e2 > -dy) { err -= dy; x0 += sx }
+      if (e2 < dx) { err += dx; y0 += sy }
+    }
+    return
+  }
+
+  // Shape Preview
+  if (selectionStart.value && selectionEnd.value && getShape() !== 'pencil' && getMode() !== 'off') {
+    const x1 = Math.min(selectionStart.value.x, selectionEnd.value.x)
+    const x2 = Math.max(selectionStart.value.x, selectionEnd.value.x)
+    const y1 = Math.min(selectionStart.value.y, selectionEnd.value.y)
+    const y2 = Math.max(selectionStart.value.y, selectionEnd.value.y)
     const cx = (x1 + x2) / 2
     const cy = (y1 + y2) / 2
     const rx = (x2 - x1) / 2
     const ry = (y2 - y1) / 2
-
     ctx.fillStyle = 'rgba(0,0,255,0.2)'
-
     const thickness = brushSize.value
 
     for (let y = y1; y <= y2; y++) {
       for (let x = x1; x <= x2; x++) {
-
-        // ===== INSIDE CHECK =====
         let inside = false
-
-        if (getShape() === 'square') {
-          inside = true
-        } else {
+        if (getShape() === 'square') inside = true
+        else {
           const dx = (x - cx) / (rx || 1)
           const dy = (y - cy) / (ry || 1)
           inside = dx * dx + dy * dy <= 1
         }
-
         if (!inside) continue
-
-        // ===== DRAW DECISION =====
+        
         let draw = false
-
-        if (getMode() === 'fill') {
-          draw = true
-        }
-
+        if (getMode() === 'fill') draw = true
         else if (getMode() === 'edge') {
-
           if (getShape() === 'square') {
-            draw =
-              x - x1 < thickness ||
-              x2 - x < thickness ||
-              y - y1 < thickness ||
-              y2 - y < thickness
-          }
-
-          else {
+            draw = x - x1 < thickness || x2 - x < thickness || y - y1 < thickness || y2 - y < thickness
+          } else {
             const dx = (x - cx) / (rx || 1)
             const dy = (y - cy) / (ry || 1)
             const dist = dx * dx + dy * dy
-
             const normThickness = thickness / Math.max(rx, ry)
             draw = Math.abs(dist - 1) <= normThickness
           }
         }
-
         if (!draw) continue
-
-        // ===== SCREEN SPACE =====
+        
         const vx = x - offsetX.value
         const vy = y - offsetY.value
-
-        // skip offscreen pixels (important)
-        if (
-          vx < 0 ||
-          vy < 0 ||
-          vx >= visibleSize.value ||
-          vy >= visibleSize.value
-        ) continue
-
-        ctx.fillRect(
-          vx * pixelSize,
-          vy * pixelSize,
-          pixelSize,
-          pixelSize
-        )
+        if (vx < 0 || vy < 0 || vx >= visibleSize.value || vy >= visibleSize.value) continue
+        ctx.fillRect(vx * pixelSize, vy * pixelSize, pixelSize, pixelSize)
       }
     }
   }
@@ -1149,21 +1578,44 @@ function startDrawing(e: MouseEvent) {
   
   saveState()
 
-  if (tool.value === 'select') {
+  if (tool.value === 'magic-wand') {
+    magicWandSelect(gx, gy)
+    drawing.value = false
+    redraw()
+    return
+  }
+  else if (tool.value === 'text') {
+    tempTextRect.value = {
+      start: { x: gx, y: gy },
+      end: { x: gx, y: gy }
+    }
     selectionStart.value = { x: gx, y: gy }
     selectionEnd.value = { x: gx, y: gy }
   }
-  if (tool.value === 'fill') {
-    // Use gradient flood fill if gradient is enabled
+  else if (tool.value === 'select') {
+    selectionStart.value = { x: gx, y: gy }
+    selectionEnd.value = { x: gx, y: gy }
+  }
+  else if (tool.value === 'fill') {
     if (useGradient.value) {
       gradientFloodFill(gx, gy)
     } else {
       floodFill(gx, gy)
     }
-  }else if(tool.value === 'line'){
+    updatePreview()
+  }
+  else if (tool.value === 'line') {
     selectionStart.value = { x: gx, y: gy }
     selectionEnd.value = { x: gx, y: gy }
-  }else if (getShape() === 'pencil') drawPixel(gx, gy)
+  }
+  else if (tool.value === 'spray') {
+    applySprayPixelImmediately(gx, gy)
+    redraw()
+    updatePreview()
+  }
+  else if (getShape() === 'pencil') {
+    drawPixel(gx, gy)
+  }
   else {
     originalSelectionStart.value = { x: gx, y: gy }
     selectionStart.value = { x: gx, y: gy }
@@ -1174,9 +1626,27 @@ function startDrawing(e: MouseEvent) {
 }
 
 function stopDrawing() {
-  if (tool.value === 'select') {
+  if (tool.value === 'text') {
+    if (tempTextRect.value) {
+      const x1 = tempTextRect.value.start.x
+      const y1 = tempTextRect.value.start.y
+      const x2 = tempTextRect.value.end.x
+      const y2 = tempTextRect.value.end.y
+      
+      textPosition.value = { x1, y1, x2, y2 }
+      showTextDialog.value = true
+      
+      selectionStart.value = null
+      selectionEnd.value = null
+      tempTextRect.value = null
+    }
+    
+    drawing.value = false
+    redraw()
+    return
+  }
+  else if (tool.value === 'select') {
     if (selectionStart.value && selectionEnd.value) {
-
       const x1 = Math.min(selectionStart.value.x, selectionEnd.value.x)
       const x2 = Math.max(selectionStart.value.x, selectionEnd.value.x)
       const y1 = Math.min(selectionStart.value.y, selectionEnd.value.y)
@@ -1187,22 +1657,10 @@ function stopDrawing() {
 
       for (let y = y1; y <= y2; y++) {
         for (let x = x1; x <= x2; x++) {
-
           const color = grid.value[y]?.[x]
           if (!color) continue
-
-          // store selected pixels
           activePixels.push({ x, y, color })
-
-          // store background (white after cut)
-          backgroundPixels.push({
-            x,
-            y,
-            color: '#ffffff'
-          })
-
-          // 🔥 CUT (this is what you're missing)
-          
+          backgroundPixels.push({ x, y, color: '#ffffff' })
         }
       }
 
@@ -1214,17 +1672,14 @@ function stopDrawing() {
     drawing.value = false
     return
   }
-
-
-  if (tool.value === 'fill') {
+  else if (tool.value === 'fill') {
     drawing.value = false
+    updatePreview()
     redraw()
     return
   }
-
-  if (tool.value === 'line') {
+  else if (tool.value === 'line') {
     if (selectionStart.value && selectionEnd.value) {
-
       const pixels = getLinePixels(
         selectionStart.value.x,
         selectionStart.value.y,
@@ -1238,53 +1693,60 @@ function stopDrawing() {
         color: grid.value[p.y]?.[p.x] || '#ffffff'
       }))
       applyPixels(pixels)
-
-      activePixels = pixels // 🔥 STORE IT
+      activePixels = pixels
     }
 
     selectionStart.value = null
     selectionEnd.value = null
-
     drawing.value = false
     redraw()
+    updatePreview()
     return
   }
-
-
-  if (getShape() !== 'pencil') {
-    applyShape()
+  else if (tool.value === 'spray') {
+    sprayPreviewPixels = []
     
+    // Store the final stroke for undo/redo
+    if (strokePixels.length > 0) {
+      backgroundPixels = strokePixels.map(p => ({
+        x: p.x,
+        y: p.y,
+        color: '#ffffff'  // Background is whatever was there before (we don't track it individually)
+      }))
+      activePixels = [...strokePixels]
+    }
+    
+    strokePixels = []
+    drawing.value = false
+    redraw()
+    updatePreview()
+    return
+  }
+  else if (getShape() !== 'pencil') {
+    applyShape()
     selectionStart.value = null
     selectionEnd.value = null
   }
-
-  if (getShape() === 'pencil') {
-
+  else if (getShape() === 'pencil') {
     if (strokePixels.length > 0) {
-
-      // 🔥 capture background
       backgroundPixels = strokePixels.map(p => ({
         x: p.x,
         y: p.y,
         color: grid.value[p.y]?.[p.x] || '#ffffff'
       }))
-
       applyPixels(strokePixels)
-
       activePixels = strokePixels
     }
-
     strokePixels = []
-
     drawing.value = false
     redraw()
+    updatePreview()
     return
   }
 
-
-
+  sprayPreviewPixels = []
   drawing.value = false
-
+  updatePreview()
   redraw()
 }
 
@@ -1297,16 +1759,29 @@ function draw(e: MouseEvent) {
   const gx = pos.x + offsetX.value
   const gy = pos.y + offsetY.value
 
-  if (tool.value === 'select') {
+  if (tool.value === 'text') {
+    if (tempTextRect.value) {
+      tempTextRect.value.end = { x: gx, y: gy }
+      selectionEnd.value = { x: gx, y: gy }
+    }
+  }
+  else if (tool.value === 'select') {
     selectionEnd.value = { x: gx, y: gy }
   }
-
-
-  if (tool.value === 'line') {
+  else if (tool.value === 'line') {
     selectionEnd.value = { x: gx, y: gy }
-  }else if (getShape() === 'pencil') {
+  }
+  else if (tool.value === 'spray') {
+    applySprayPixelImmediately(gx, gy)  // Draw immediately during drag
+    updateSprayPreview(gx, gy)          // Update preview at current position
+    redraw() 
+  }
+  else if (getShape() === 'pencil') {
     drawPixel(gx, gy)
-  }else selectionEnd.value = { x: gx, y: gy }
+  }
+  else {
+    selectionEnd.value = { x: gx, y: gy }
+  }
 
   redraw()
 }
@@ -1325,12 +1800,13 @@ function handleWheel(e: WheelEvent) {
 
   clampOffset()
   redraw()
+  updatePreview()
 }
 
-function moveLeft() { offsetX.value--; clampOffset(); redraw() }
-function moveRight() { offsetX.value++; clampOffset(); redraw() }
-function moveUp() { offsetY.value--; clampOffset(); redraw() }
-function moveDown() { offsetY.value++; clampOffset(); redraw() }
+function moveLeft() { offsetX.value--; clampOffset(); redraw(); updatePreview() }
+function moveRight() { offsetX.value++; clampOffset(); redraw(); updatePreview() }
+function moveUp() { offsetY.value--; clampOffset(); redraw(); updatePreview() }
+function moveDown() { offsetY.value++; clampOffset(); redraw(); updatePreview() }
 
 function handleKey(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === 'z') {
@@ -1352,9 +1828,6 @@ function handleKey(e: KeyboardEvent) {
   if (e.key === 'ArrowDown') moveActivePixels(0, 1)
   if (e.key === 'ArrowLeft') moveActivePixels(-1, 0)
   if (e.key === 'ArrowRight') moveActivePixels(1, 0)
-
-
-
 }
 
 function clampOffset() {
@@ -1370,63 +1843,144 @@ onMounted(async () => {
     canvas.value.height = CANVAS_SIZE
     ctx = canvas.value.getContext('2d')
   }
+  
+  if (previewCanvas.value) {
+    previewCtx = previewCanvas.value.getContext('2d')
+  }
 
   const id = route.params.id as string | undefined
 
   if (id) {
-    // EDIT MODE
     pictureId.value = id
-
     const pic = await getPictureById(id)
-
     grid.value = pic.pixels
     gridSize.value = pic.size
     visibleSize.value = pic.size
-
   } else {
-    // CREATE MODE
     createGrid(gridSize.value)
   }
 
   redraw()
+  updatePreview()
   canvas.value?.focus()
+})
+
+// Watch for minimap visibility changes
+watch(minimapVisible, (newVisible) => {
+  if (newVisible) {
+    // When minimap becomes visible, force a preview update
+    nextTick(() => {
+      updatePreview()
+    })
+  }
 })
 
 watch(gridSize, () => {
   resizeGrid(gridSize.value)
   if (visibleSize.value > gridSize.value) visibleSize.value = gridSize.value
   redraw()
+  updatePreview()
 })
 
 watch(visibleSize, () => {
   clampOffset()
   redraw()
+  updatePreview()
 })
+
+watch(grid, () => {
+  updatePreview()
+}, { deep: true })
 </script>
 
 <style scoped>
+/* Mobile First Base Styles */
+* {
+  box-sizing: border-box;
+}
+
 .app-container {
-  display: grid;
-  grid-template-columns: 220px 1fr 220px;
+  display: flex;
+  flex-direction: column;
   height: 100vh;
   background: #1e1e1e;
   color: #eee;
   font-family: sans-serif;
+  position: relative;
+  overflow: hidden;
 }
 
-/* SIDEBARS */
+/* SIDEBARS - Hidden by default on mobile, accessible via buttons */
 .sidebar {
-  padding: 15px;
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 85%;
+  max-width: 280px;
   background: #2a2a2a;
+  padding: 15px;
   display: flex;
   flex-direction: column;
   gap: 10px;
+  overflow-y: auto;
+  z-index: 1000;
+  transition: transform 0.3s ease;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.3);
+}
+
+.sidebar.left {
+  left: 0;
+  transform: translateX(-100%);
   border-right: 1px solid #444;
 }
 
+.sidebar.left.open {
+  transform: translateX(0);
+}
+
 .sidebar.right {
-  border-right: none;
+  right: 0;
+  transform: translateX(100%);
   border-left: 1px solid #444;
+}
+
+.sidebar.right.open {
+  transform: translateX(0);
+}
+
+/* Sidebar toggle buttons for mobile */
+/* Sidebar toggle buttons for mobile - Positioned below toolbar */
+.menu-toggle {
+  position: fixed;
+  top: 140px; /* Below navbar (adjust based on your navbar height) */
+  left: 10px;
+  z-index: 102;
+  background: #0084ff;
+  padding: 8px 12px;
+  font-size: 20px;
+  border-radius: 8px;
+}
+
+.right-menu-toggle {
+  position: fixed;
+  top: 140px; /* Below navbar (adjust based on your navbar height) */
+  left: 70px;
+  z-index: 102;
+  background: #0084ff;
+  padding: 8px 12px;
+  font-size: 20px;
+  border-radius: 8px;
+}
+
+/* Overlay when sidebar is open */
+.sidebar-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0,0,0,0.5);
+  z-index: 999;
 }
 
 .sidebar h3 {
@@ -1436,188 +1990,93 @@ watch(visibleSize, () => {
   color: #bbb;
 }
 
-/* CENTER */
+/* CENTER - Takes full width on mobile */
+/* CENTER - Takes full width on mobile */
 .center {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: flex-start;
-}
-
-/* TOOLBAR */
-.toolbar {
-  display: flex;
-  gap: 10px;
-  padding: 10px;
-  background: #333;
-  border-bottom: 1px solid #444;
-  width: 98%;
-  justify-content: center;
-}
-
-/* CANVAS AREA */
-.canvas-area {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  margin-top: 10px;
-}
-
-.middle {
-  display: flex;
-  align-items: center;
-}
-
-/* BUTTONS */
-button {
-  background: #444;
-  color: white;
-  border: none;
-  padding: 6px 10px;
-  cursor: pointer;
-  border-radius: 6px;
-}
-
-button:hover {
-  background: #555;
-}
-
-button.active {
-  background: #0084ff;
-}
-
-/* TOOL BUTTONS */
-.tool-btn {
-  width: 40px;
-  height: 40px;
-  font-size: 18px;
-}
-
-/* SPECIAL SHAPES */
-.tool-btn.square {
-  background: linear-gradient(to bottom, #aaa, #777);
-}
-
-.tool-btn.circle {
-  border-radius: 50%;
-  background: linear-gradient(to bottom, #aaa, #777);
-}
-
-/* ARROWS */
-.arrow {
-  margin: 5px;
-  font-size: 18px;
-}
-
-/* INPUTS */
-input[type="number"] {
-  width: 80px;
-}
-
-input[type="color"] {
+  position: relative;
+  flex: 1;
   width: 100%;
-  height: 30px;
-  border: none;
+  overflow: hidden;
+  padding-top: 60px; /* Space for mobile menu buttons */
 }
 
-/* BRUSH */
-.brush-controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-html, body, #app {
-  height: 100%;
-  margin: 0;
+/* Add this new class for navbar offset */
+.navbar-offset {
+  padding-top: 70px; /* Space for fixed navbar on mobile */
 }
 
-
-.app-container {
-  display: grid;
-  grid-template-columns: 220px 1fr 220px;
-  height: 100%;
-  background: #1e1e1e;
-  color: #eee;
-  overflow: hidden; /* prevents stray scroll gaps */
-}
-
-/* SIDEBARS */
-.sidebar {
-  padding: 15px;
-  background: #2a2a2a;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  overflow-y: auto;
-}
-
-.sidebar.right {
-  border-left: 1px solid #444;
-}
-
-.sidebar.left {
-  border-right: 1px solid #444;
-}
-
-/* CENTER */
-.center {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-/* TOOLBAR */
+/* TOOLBAR - Horizontal scrollable on mobile */
+/* TOOLBAR - Horizontal scrollable on mobile */
 .toolbar {
   display: flex;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 10px;
+  gap: 8px;
+  padding: 8px;
   background: #333;
   border-bottom: 1px solid #444;
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: nowrap;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+  position: fixed;
+  top: 60px; /* Push below navbar (adjust based on your navbar height) */
+  left: 0;
+  right: 0;
+  z-index: 50;
 }
 
-/* GROUPING */
+.toolbar::-webkit-scrollbar {
+  height: 3px;
+}
+
 .tool-group {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
+  flex-shrink: 0;
 }
 
-/* BRUSH */
-.brush {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-}
-
-/* CANVAS AREA (this is key fix) */
+/* CANVAS WRAPPER - Responsive */
 .canvas-wrapper {
-  flex: 1; /* 🔥 fills remaining space */
+  flex: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
+  width: 100%;
+  padding: 10px;
+  overflow: auto;
+  margin-top: 110px; /* Offset for navbar + toolbar */
 }
 
-/* CENTER ROW */
 .middle {
   display: flex;
   align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
 }
 
-/* BUTTONS */
+/* BUTTONS - Larger touch targets */
 button {
   background: #444;
   color: white;
   border: none;
-  padding: 6px 10px;
+  padding: 10px 12px;
   cursor: pointer;
-  border-radius: 6px;
+  border-radius: 8px;
+  font-size: 16px;
+  min-width: 44px;
+  min-height: 44px;
+  touch-action: manipulation;
 }
 
-button:hover {
-  background: #555;
+button:active {
+  transform: scale(0.96);
 }
 
 button.active {
@@ -1626,74 +2085,232 @@ button.active {
 
 /* TOOL BUTTONS */
 .tool-btn {
-  width: 40px;
-  height: 40px;
-  font-size: 18px;
+  width: 48px;
+  height: 48px;
+  font-size: 20px;
 }
 
-/* SHAPES */
-.tool-btn.square {
-  background: linear-gradient(to bottom, #aaa, #777);
-}
-
-.tool-btn.circle {
-  border-radius: 50%;
-  background: linear-gradient(to bottom, #aaa, #777);
-}
-
-/* ARROWS */
+/* ARROWS - Navigation buttons */
 .arrow {
   margin: 5px;
+  font-size: 24px;
+  padding: 12px;
+  min-width: 50px;
 }
 
-/* INPUTS */
+/* INPUTS - Mobile friendly */
 input[type="number"] {
   width: 70px;
+  padding: 8px;
+  font-size: 14px;
+  border-radius: 6px;
+  border: 1px solid #555;
+  background: #444;
+  color: white;
 }
 
 input[type="color"] {
-  width: 32px;
-  height: 32px;
+  width: 48px;
+  height: 48px;
   padding: 0;
   border: none;
   background: none;
+  cursor: pointer;
 }
 
+/* BRUSH CONTROLS */
+.brush {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #3a3a3a;
+  padding: 5px 10px;
+  border-radius: 8px;
+}
 
+.brush span {
+  min-width: 30px;
+  text-align: center;
+  font-size: 16px;
+}
 
-/* Minimal version - cleaner UI */
+/* SPRAY & TOLERANCE CONTROLS */
+.spray-control, .tolerance-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: #3a3a3a;
+  padding: 5px 10px;
+  border-radius: 8px;
+}
 
+.spray-control input, .tolerance-control input {
+  width: 100px;
+}
 
+/* PREVIEW WINDOW - Mobile optimized */
+.preview-window {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  background: #2a2a2a;
+  border: 2px solid #444;
+  border-radius: 8px;
+  padding: 8px;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  max-width: calc(100% - 20px);
+}
 
-/* Simple text indicators instead of pseudo-elements */
-.tool-btn.square.fill::before {
-  content: '■';
+.preview-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 11px;
+  color: #ccc;
+}
+
+.close-preview {
+  background: #444;
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: auto;
+  min-height: auto;
+}
+
+.preview-canvas {
+  width: 120px;
+  height: 120px;
+  cursor: pointer;
+  border: 1px solid #555;
+  image-rendering: crisp-edges;
+  image-rendering: pixelated;
+}
+
+.preview-controls {
+  margin-top: 6px;
+  text-align: center;
+}
+
+.toggle-preview {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  background: #0084ff;
+  padding: 12px;
   font-size: 20px;
+  z-index: 201;
+  border-radius: 50%;
+  width: 50px;
+  height: 50px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
 }
 
-.tool-btn.square.edge::before {
-  content: '□';
-  font-size: 20px;
+/* CANVAS - Responsive sizing */
+canvas {
+  max-width: 100%;
+  height: auto;
+  cursor: crosshair;
+  background: white;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
 
-.tool-btn.square.off::before {
-  content: '✕';
-  font-size: 20px;
+/* Modal - Mobile friendly */
+.modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 16px;
 }
 
-.tool-btn.circle.fill::before {
-  content: '●';
-  font-size: 20px;
+.modal {
+  background: #2a2a2a;
+  padding: 20px;
+  border-radius: 12px;
+  width: 100%;
+  max-width: 400px;
+  max-height: 90vh;
+  overflow-y: auto;
+  color: #eee;
 }
 
-.tool-btn.circle.edge::before {
-  content: '○';
-  font-size: 22px;
+.modal h3 {
+  margin-top: 0;
+  font-size: 18px;
 }
 
+.modal textarea {
+  width: 100%;
+  padding: 10px;
+  margin: 10px 0;
+  background: #444;
+  color: white;
+  border: 1px solid #666;
+  border-radius: 8px;
+  font-family: monospace;
+  resize: vertical;
+  font-size: 14px;
+}
+
+.modal-controls {
+  margin: 15px 0;
+}
+
+.modal-controls label {
+  display: block;
+  margin: 12px 0;
+  font-size: 14px;
+}
+
+.modal-controls input,
+.modal-controls select {
+  margin-left: 10px;
+  padding: 8px;
+  background: #444;
+  color: white;
+  border: 1px solid #666;
+  border-radius: 6px;
+  font-size: 14px;
+}
+
+.modal-buttons {
+  display: flex;
+  gap: 12px;
+  justify-content: flex-end;
+  margin-top: 20px;
+}
+
+.modal-buttons button {
+  padding: 10px 20px;
+  font-size: 14px;
+}
+
+small {
+  display: block;
+  font-size: 11px;
+  color: #aaa;
+  margin-top: 4px;
+}
+
+/* Simple text indicators */
+.tool-btn.square.fill::before,
+.tool-btn.square.edge::before,
+.tool-btn.square.off::before,
+.tool-btn.circle.fill::before,
+.tool-btn.circle.edge::before,
 .tool-btn.circle.off::before {
-  content: '✕';
-  font-size: 20px;
+  font-size: 22px;
 }
 
 /* Active state */
@@ -1703,4 +2320,198 @@ input[type="color"] {
   outline-offset: 2px;
   transform: scale(1.05);
 }
+
+/* Utility classes */
+.hidden-mobile {
+  display: none;
+}
+
+/* Tablet and Desktop styles */
+@media (min-width: 768px) {
+  .app-container {
+    display: grid;
+    grid-template-columns: 220px 1fr 220px;
+    flex-direction: row;
+  }
+  
+  .menu-toggle,
+  .right-menu-toggle {
+    display: none;
+  }
+  
+  .sidebar {
+    position: relative;
+    transform: translateX(0) !important;
+    width: auto;
+    max-width: none;
+    z-index: auto;
+    box-shadow: none;
+  }
+  
+  .sidebar.left {
+    transform: translateX(0);
+  }
+  
+  .sidebar.right {
+    transform: translateX(0);
+  }
+  
+  .sidebar-overlay {
+    display: none;
+  }
+  
+  .center {
+    padding-top: 0;
+  }
+  
+  .toolbar {
+    position: relative;
+    top: auto;
+    left: auto;
+    right: auto;
+    overflow-x: visible;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+  
+  .tool-group {
+    display: flex;
+    flex-wrap: wrap;
+  }
+  
+  button {
+    padding: 6px 10px;
+    min-width: auto;
+    min-height: auto;
+  }
+  
+  .tool-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  
+  .arrow {
+    font-size: 18px;
+    padding: 6px 10px;
+  }
+  
+  .preview-window {
+    bottom: 20px;
+    right: 240px;
+  }
+  
+  .preview-canvas {
+    width: 150px;
+    height: 150px;
+  }
+  
+  .toggle-preview {
+    bottom: 20px;
+    right: 20px;
+  }
+  
+  input[type="color"] {
+    width: 32px;
+    height: 32px;
+  }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+  .tool-group {
+    gap: 4px;
+  }
+  
+  button {
+    padding: 8px 10px;
+    font-size: 14px;
+  }
+  
+  .tool-btn {
+    width: 42px;
+    height: 42px;
+    font-size: 18px;
+  }
+  
+  .brush span {
+    min-width: 25px;
+  }
+  
+  .spray-control input, 
+  .tolerance-control input {
+    width: 70px;
+  }
+  
+  .preview-canvas {
+    width: 100px;
+    height: 100px;
+  }
+  
+  .modal {
+    padding: 16px;
+  }
+}
+
+
+
+/* Mobile - Move arrows under the grid */
+@media (max-width: 768px) {
+  .canvas-wrapper {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  /* Reorder the arrows to be under the grid */
+  .canvas-wrapper .arrow:first-child {
+    order: 3; /* Up arrow goes to bottom */
+  }
+  
+  .middle {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    order: 2;
+  }
+  
+  /* Move the bottom arrow to the bottom */
+  .canvas-wrapper .arrow:last-child {
+    order: 4;
+    margin-top: 10px;
+  }
+  
+  /* Ensure canvas stays in middle */
+  .middle canvas {
+    order: 1;
+  }
+  
+  /* Style the arrow buttons on mobile */
+  .arrow {
+    margin: 5px auto;
+    width: 60px;
+  }
+  
+  /* Horizontal arrows inside middle */
+  .middle .arrow {
+    display: inline-block;
+    margin: 0 10px;
+  }
+  
+  /* Make arrow layout vertical on mobile */
+  .middle {
+    flex-direction: column;
+  }
+  
+  .middle .arrow:first-child {
+    margin-bottom: 10px;
+  }
+  
+  .middle .arrow:last-child {
+    margin-top: 10px;
+  }
+}
+
+
 </style>

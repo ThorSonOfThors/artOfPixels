@@ -267,3 +267,22 @@ export async function deletePicture(id: string) {
 
   if (error) throw error
 }
+
+
+
+export async function getMostLikedPicture() {
+  const { data, error } = await supabase
+    .from('pictures')
+    .select('id, pixels, size, likes, created_at')
+    .is('deleted_at', null)
+    .order('likes', { ascending: false })
+    .limit(1)
+    .maybeSingle()
+
+  if (error) {
+    console.error('Error fetching most liked picture:', error)
+    return null
+  }
+
+  return data
+}
