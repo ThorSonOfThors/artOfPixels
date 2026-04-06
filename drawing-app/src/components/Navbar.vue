@@ -14,42 +14,50 @@
       </div>
 
       <div class="nav-links right">
-        <template v-if="auth.user">
-          <user-dropdown/>
-        </template>
-
+        <!-- Only show UserDropdown, no extra links -->
+        <UserDropdown v-if="auth.user" />
+        
         <template v-else>
           <router-link to="/login" class="nav-link">Login</router-link>
           <router-link to="/register" class="nav-link btn-primary">Register</router-link>
         </template>
       </div>
 
-      <!-- Mobile Menu Button - Now on the RIGHT -->
+      <!-- Mobile Menu Button -->
       <button class="mobile-menu-btn" @click="toggleMobileMenu" aria-label="Menu">
         {{ mobileMenuOpen ? '✕' : '☰' }}
       </button>
     </div>
 
-    <!-- Mobile Navigation Menu - Full Screen -->
-    <div class="nav-links-mobile" :class="{ open: mobileMenuOpen }">
-      <router-link to="/draw" class="nav-link" @click="closeMobileMenu">Draw</router-link>
-      <router-link to="/gallery" class="nav-link" @click="closeMobileMenu">Gallery</router-link>
-      
-      <template v-if="auth.user">
-        <router-link to="/edit-profile" class="nav-link" @click="closeMobileMenu">Edit Profile</router-link>
-        <button @click="handleLogout" class="nav-link btn-primary">Logout</button>
-      </template>
+    <!-- Mobile Navigation Menu -->
+    <transition name="slide">
+      <div v-if="mobileMenuOpen" class="nav-links-mobile">
+        
+        <div class="mobile-menu-content">
+          <div class="mobile-user-email">{{ auth.username  || auth.user?.email}}</div>
+          <router-link to="/draw" class="nav-link" @click="closeMobileMenu">Draw</router-link>
+          <router-link to="/gallery" class="nav-link" @click="closeMobileMenu">Gallery</router-link>
+          
+          <!-- On mobile, show dropdown links directly in menu -->
+          <template v-if="auth.user">
+            
+            <router-link to="/my-gallery" class="nav-link" @click="closeMobileMenu">My Artworks</router-link>
+            <router-link to="/edit-profile" class="nav-link" @click="closeMobileMenu">Profile Settings</router-link>
+            <button @click="handleLogout" class="nav-link btn-primary">Logout</button>
+          </template>
 
-      <template v-else>
-        <router-link to="/login" class="nav-link" @click="closeMobileMenu">Login</router-link>
-        <router-link to="/register" class="nav-link btn-primary" @click="closeMobileMenu">Register</router-link>
-      </template>
-    </div>
+          <template v-else>
+            <router-link to="/login" class="nav-link" @click="closeMobileMenu">Login</router-link>
+            <router-link to="/register" class="nav-link btn-primary" @click="closeMobileMenu">Register</router-link>
+          </template>
+        </div>
+      </div>
+    </transition>
   </nav>
 </template>
 
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { ref } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import UserDropdown from './UserDropdown.vue'
 
@@ -60,38 +68,26 @@ function toggleMobileMenu() {
   mobileMenuOpen.value = !mobileMenuOpen.value
   if (mobileMenuOpen.value) {
     document.body.style.overflow = 'hidden'
-    document.body.style.position = 'fixed'
-    document.body.style.width = '100%'
   } else {
     document.body.style.overflow = ''
-    document.body.style.position = ''
-    document.body.style.width = ''
   }
 }
 
 function closeMobileMenu() {
   mobileMenuOpen.value = false
   document.body.style.overflow = ''
-  document.body.style.position = ''
-  document.body.style.width = ''
 }
 
 function handleLogout() {
   auth.logout()
   closeMobileMenu()
 }
-
-// Clean up on component unmount
-watch(() => mobileMenuOpen.value, (isOpen) => {
-  if (!isOpen) {
-    document.body.style.overflow = ''
-    document.body.style.position = ''
-    document.body.style.width = ''
-  }
-})
 </script>
 
 <style scoped>
+/* Your existing navbar styles here */
+/* ... (keep all your existing navbar styles) ... */
+
 * {
   margin: 0;
   padding: 0;
@@ -105,7 +101,8 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   background: linear-gradient(135deg, #0a0f0a 0%, #0d1a0d 100%);
   border-bottom: 2px solid #2ecc2e;
   box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-  backdrop-filter: blur(10px);
+  width: 100%;
+  display: block;
 }
 
 .nav-container {
@@ -115,24 +112,14 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 2rem;
+  width: 100%;
 }
 
-/* Logo Styles - Always on LEFT */
-.logo {
-  order: 1;
-}
-
+/* Logo */
 .logo-link {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
   text-decoration: none;
-  transition: transform 0.2s ease;
-}
-
-.logo-link:hover {
-  transform: scale(1.05);
 }
 
 .logo-img {
@@ -151,15 +138,18 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
 .left {
   flex: 1;
   justify-content: flex-start;
-  order: 2;
 }
 
 .right {
   justify-content: flex-end;
-  order: 3;
 }
 
-/* Mobile Menu Button - On the RIGHT */
+/* User Dropdown */
+.user-dropdown-component {
+  display: block;
+}
+
+/* Mobile Menu Button */
 .mobile-menu-btn {
   display: none;
   background: none;
@@ -169,105 +159,55 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   cursor: pointer;
   padding: 8px 12px;
   border-radius: 8px;
-  transition: all 0.3s ease;
-  z-index: 1002;
-  order: 4;
   font-weight: bold;
+  z-index: 1002;
+  position: relative;
 }
 
 .mobile-menu-btn:hover {
   background: rgba(46, 204, 46, 0.1);
-  transform: scale(1.05);
 }
 
-.mobile-menu-btn:active {
-  transform: scale(0.95);
-}
-
-/* Base Link Styles */
+/* Nav Links */
 .nav-link {
-  position: relative;
   padding: 0.5rem 1rem;
   color: #e0e0e0;
   text-decoration: none;
   font-weight: 500;
   font-size: 0.95rem;
-  letter-spacing: 0.5px;
   transition: all 0.3s ease;
   border-radius: 8px;
   white-space: nowrap;
 }
 
-/* Link Hover Effects */
-.nav-link::before {
-  content: '';
-  position: absolute;
-  bottom: 0;
-  left: 50%;
-  transform: translateX(-50%);
-  width: 0;
-  height: 2px;
-  background: linear-gradient(90deg, #2ecc2e, #27ae60);
-  transition: width 0.3s ease;
-}
-
-.nav-link:hover::before {
-  width: 70%;
-}
-
 .nav-link:hover {
   color: #2ecc2e;
   background: rgba(46, 204, 46, 0.1);
-  transform: translateY(-1px);
 }
 
-/* Active Link State */
+/* Active Link */
 .router-link-active {
   color: #2ecc2e;
   background: rgba(46, 204, 46, 0.15);
   font-weight: 600;
 }
 
-.router-link-active::before {
-  width: 70%;
-  height: 2px;
-  background: linear-gradient(90deg, #2ecc2e, #27ae60);
-}
-
-/* Primary Button Style */
+/* Primary Button */
 .btn-primary {
   background: linear-gradient(135deg, #2ecc2e 0%, #27ae60 100%);
   color: #0a0f0a;
   font-weight: 600;
   padding: 0.5rem 1.25rem;
   border-radius: 25px;
-  box-shadow: 0 2px 8px rgba(46, 204, 46, 0.3);
-}
-
-.btn-primary::before {
-  display: none;
 }
 
 .btn-primary:hover {
   background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
   color: #ffffff;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(46, 204, 46, 0.4);
-}
-
-.btn-primary:active {
-  transform: translateY(0);
-}
-
-/* Focus States */
-.nav-link:focus-visible {
-  outline: 2px solid #2ecc2e;
-  outline-offset: 2px;
-  border-radius: 4px;
 }
 
 /* ============================================ */
-/* MOBILE MENU STYLES - FULL SCREEN */
+/* FULL SCREEN MOBILE MENU WITH SLIDING */
 /* ============================================ */
 .nav-links-mobile {
   position: fixed;
@@ -279,42 +219,78 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   height: 100vh;
   background: linear-gradient(135deg, #0a0f0a 0%, #0d1a0d 100%);
   z-index: 1001;
+  overflow-y: auto;
+  padding: 60px 20px 40px;
+}
+
+.mobile-menu-content {
+  display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 2rem;
-  transform: translateX(100%);
-  transition: transform 0.3s ease;
-  overflow-y: auto;
-  padding: 80px 20px;
+  gap: 1.5rem;
+  min-height: 100%;
+  width: 100%;
+  max-width: 400px;
+  margin: 0 auto;
 }
 
-.nav-links-mobile.open {
-  transform: translateX(0);
-  display: flex !important;
-}
-
-.nav-links-mobile .nav-link {
-  font-size: 1.8rem;
-  padding: 1.2rem 2rem;
-  width: 85%;
-  max-width: 350px;
-  text-align: center;
-  color: #e0e0e0;
-  text-decoration: none;
-  border-radius: 16px;
+/* Mobile Close Button - Only one X button */
+.mobile-close-btn {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  background: rgba(46, 204, 46, 0.2);
+  border: 2px solid #2ecc2e;
+  color: #2ecc2e;
+  font-size: 28px;
+  cursor: pointer;
+  width: 50px;
+  height: 50px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   transition: all 0.3s ease;
+  z-index: 1003;
+}
+
+.mobile-close-btn:hover {
+  background: rgba(46, 204, 46, 0.4);
+  transform: rotate(90deg);
+}
+
+/* Sliding Animation */
+.slide-enter-active,
+.slide-leave-active {
+  transition: transform 0.3s ease;
+}
+
+.slide-enter-from,
+.slide-leave-to {
+  transform: translateX(100%);
+}
+
+.slide-enter-to,
+.slide-leave-from {
+  transform: translateX(0);
+}
+
+/* Mobile Menu Links */
+.nav-links-mobile .nav-link {
+  font-size: 1.5rem;
+  padding: 1rem 2rem;
+  width: 100%;
+  text-align: center;
   background: rgba(46, 204, 46, 0.1);
   border: 2px solid rgba(46, 204, 46, 0.3);
   white-space: normal;
-  font-weight: 600;
+  display: block;
 }
 
-.nav-links-mobile .nav-link:hover,
 .nav-links-mobile .nav-link:active {
-  background: rgba(46, 204, 46, 0.25);
-  transform: scale(1.05);
-  color: #2ecc2e;
+  transform: scale(0.98);
+  background: rgba(46, 204, 46, 0.2);
 }
 
 .nav-links-mobile .btn-primary {
@@ -322,110 +298,120 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   color: #0a0f0a;
   font-weight: 700;
   border: none;
-  font-size: 1.8rem;
-  padding: 1.2rem 2rem;
-  width: 85%;
-  max-width: 350px;
+  font-size: 1.5rem;
+  padding: 1rem 2rem;
+  width: 100%;
 }
 
-.nav-links-mobile .btn-primary:hover,
 .nav-links-mobile .btn-primary:active {
+  transform: scale(0.98);
   background: linear-gradient(135deg, #27ae60 0%, #229954 100%);
   color: #ffffff;
-  transform: scale(1.05);
 }
 
-/* Remove the close button since hamburger turns into X */
-.nav-links-mobile .close-menu-btn {
-  display: none;
+.mobile-user-email {
+  color: #2ecc2e;
+  font-size: 1.1rem;
+  text-align: center;
+  padding: 1rem;
+  
+  border-radius: 12px;
+  width: 100%;
+  word-break: break-all;
+  
+  margin-bottom: 0.5rem;
 }
 
 /* ============================================ */
-/* MOBILE RESPONSIVE BREAKPOINTS */
+/* MOBILE RESPONSIVE */
 /* ============================================ */
 @media (max-width: 768px) {
   .nav-container {
-    padding: 0.75rem 1rem;
-    justify-content: space-between;
-  }
-
-  /* Hide desktop nav links */
-  .nav-links {
-    display: none;
-  }
-
-  /* Show mobile menu button on RIGHT */
-  .mobile-menu-btn {
-    display: block;
-  }
-
-  /* Logo stays on LEFT */
-  .logo {
-    order: 1;
-  }
-
-  .mobile-menu-btn {
-    order: 2;
-  }
-
-  /* Ensure mobile menu is hidden by default */
-  .nav-links-mobile {
-    display: flex;
-  }
-  
-  .nav-links-mobile:not(.open) {
-    display: flex !important;
-    transform: translateX(100%);
-  }
-
-  .logo-img {
-    height: 60px;
-  }
-  
-  .nav-links-mobile .nav-link {
-    font-size: 1.5rem;
-    padding: 1rem 1.5rem;
-  }
-  
-  .nav-links-mobile .btn-primary {
-    font-size: 1.5rem;
-    padding: 1rem 1.5rem;
-  }
-}
-
-@media (max-width: 480px) {
-  .nav-container {
     padding: 0.5rem 1rem;
   }
-
+  
+  /* Hide desktop nav links on mobile */
+  .nav-links {
+    display: none !important;
+  }
+  
+  /* Show mobile menu button */
+  .mobile-menu-btn {
+    display: block !important;
+  }
+  
   .logo-img {
     height: 50px;
   }
-
-  .mobile-menu-btn {
-    font-size: 28px;
-    padding: 6px 10px;
-  }
-
+  
   .nav-links-mobile .nav-link {
     font-size: 1.3rem;
-    padding: 0.9rem 1.2rem;
-    width: 90%;
-  }
-
-  .nav-links-mobile .btn-primary {
-    font-size: 1.3rem;
-    padding: 0.9rem 1.2rem;
-    width: 90%;
+    padding: 0.9rem 1.5rem;
   }
   
-  .nav-links-mobile {
-    gap: 1.5rem;
-    padding: 60px 20px;
+  .nav-links-mobile .btn-primary {
+    font-size: 1.3rem;
+    padding: 0.9rem 1.5rem;
+  }
+  
+  .mobile-close-btn {
+    width: 45px;
+    height: 45px;
+    font-size: 24px;
+    top: 15px;
+    right: 15px;
+  }
+  
+  .mobile-user-email {
+    font-size: 1rem;
+    padding: 0.8rem;
   }
 }
 
-/* Desktop styles - ensure mobile menu is hidden */
+/* Small mobile */
+@media (max-width: 480px) {
+  .logo-img {
+    height: 40px;
+  }
+  
+  .mobile-menu-btn {
+    font-size: 24px;
+    padding: 5px 10px;
+  }
+  
+  .nav-links-mobile {
+    padding: 50px 15px 30px;
+  }
+  
+  .mobile-menu-content {
+    gap: 1rem;
+  }
+  
+  .nav-links-mobile .nav-link {
+    font-size: 1.2rem;
+    padding: 0.8rem 1.2rem;
+  }
+  
+  .nav-links-mobile .btn-primary {
+    font-size: 1.2rem;
+    padding: 0.8rem 1.2rem;
+  }
+  
+  .mobile-close-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 20px;
+    top: 10px;
+    right: 10px;
+  }
+  
+  .mobile-user-email {
+    font-size: 0.9rem;
+    padding: 0.7rem;
+  }
+}
+
+/* Desktop styles */
 @media (min-width: 769px) {
   .nav-links-mobile {
     display: none !important;
@@ -434,35 +420,37 @@ watch(() => mobileMenuOpen.value, (isOpen) => {
   .mobile-menu-btn {
     display: none !important;
   }
+  
+  .mobile-close-btn {
+    display: none;
+  }
 }
 
-/* Smooth Scrolling */
-html {
-  scroll-behavior: smooth;
-}
-
-/* Custom Scrollbar */
-::-webkit-scrollbar {
-  width: 8px;
-}
-
-::-webkit-scrollbar-track {
-  background: #0a0f0a;
-}
-
-::-webkit-scrollbar-thumb {
-  background: #2ecc2e;
-  border-radius: 4px;
-}
-
-::-webkit-scrollbar-thumb:hover {
-  background: #27ae60;
-}
-
-/* Prevent scroll on body when menu is open */
-body.menu-open {
-  overflow: hidden;
-  position: fixed;
+/* Fix for horizontal scroll */
+body, html {
+  overflow-x: hidden;
   width: 100%;
+  margin: 0;
+  padding: 0;
+}
+
+#app {
+  overflow-x: hidden;
+  width: 100%;
+}
+
+
+/* Make sure UserDropdown is visible on desktop */
+@media (min-width: 769px) {
+  .user-dropdown {
+    display: block;
+  }
+}
+
+/* On mobile, UserDropdown is replaced by direct links in mobile menu */
+@media (max-width: 768px) {
+  .user-dropdown {
+    display: none;
+  }
 }
 </style>

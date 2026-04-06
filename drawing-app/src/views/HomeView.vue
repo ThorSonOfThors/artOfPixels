@@ -23,7 +23,7 @@
       </div>
       <div class="hero-stats" v-if="!loading && topPicture">
         <div class="stat-item">
-          <span class="stat-value">{{ topPicture.likes_count || 0 }}</span>
+          <span class="stat-value">{{ topPicture.likes || 0 }}</span>
           <span class="stat-label">Likes</span>
         </div>
         <div class="stat-divider"></div>
@@ -38,7 +38,7 @@
     <section class="featured-section">
       <div class="section-header">
         <h2 class="section-title">
-          <label>🔥 </label>
+          <label class="fire-label">🔥 </label>
           <span class="fire-icon"></span>
           Most Liked Artwork
         </h2>
@@ -85,7 +85,7 @@
             <div class="stat-card">
               <div class="stat-icon">❤️</div>
               <div class="stat-details">
-                <span class="stat-value">{{ topPicture.likes_count || 0 }}</span>
+                <span class="stat-value">{{ topPicture.likes || 0 }}</span>
                 <span class="stat-label">Likes</span>
               </div>
             </div>
@@ -443,6 +443,14 @@ onMounted(() => {
   color: transparent;
 }
 
+.fire-label {
+  background: none;              /* remove gradient */
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  color: initial;                /* restore default emoji color */
+}
+
+
 .fire-icon, .sparkle-icon {
   font-size: 40px;
 }
@@ -769,6 +777,15 @@ onMounted(() => {
 
 ::-webkit-scrollbar-thumb:hover {
   background: #45a049;
+}
+
+
+
+.sparkle-icon {
+  background: none;              /* remove gradient */
+  -webkit-background-clip: initial;
+  background-clip: initial;
+  color: initial;                /* restore default emoji color */
 }
 
 /* RESPONSIVE */

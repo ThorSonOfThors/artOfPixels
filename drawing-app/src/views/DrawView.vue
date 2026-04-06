@@ -151,10 +151,14 @@
 
       <!-- CANVAS -->
       <div class="canvas-wrapper">
-        <button class="arrow" @click="moveUp">⬆️</button>
+        
+        <!-- Mode Toggle Button for Mobile -->
+        <button class="mode-toggle" :class="{ active: isPanMode, pan: isPanMode, draw: !isPanMode }" @click="toggleMode" title="Toggle between drawing and panning">
+          {{ isPanMode ? '✋' : '✏️' }}
+        </button>
 
         <div class="middle">
-          <button class="arrow" @click="moveLeft">⬅️</button>
+          
 
           <canvas
             ref="canvas"
@@ -163,12 +167,19 @@
             @mouseleave="stopDrawing"
             @mousemove="draw"
             @wheel.prevent="handleWheel"
+            @touchstart="handleTouchStart"
+            @touchmove="handleTouchMove"
+            @touchend="handleTouchEnd"
+            @touchcancel="handleTouchEnd"
           ></canvas>
+          <button class="arrow" @click="moveUp" @touchstart="moveUp">⬆️</button>
+          <button class="arrow" @click="moveLeft" @touchstart="moveLeft">⬅️</button>
+          <button class="arrow" @click="moveRight" @touchstart="moveRight">➡️</button>
+          <button class="arrow" @click="moveDown" @touchstart="moveDown">⬇️</button>
 
-          <button class="arrow" @click="moveRight">➡️</button>
+          
         </div>
-
-        <button class="arrow" @click="moveDown">⬇️</button>
+       
       </div>
 
       <!-- PREVIEW WINDOW (Minimap) -->
@@ -317,6 +328,11 @@ type CanvasState = {
   selectionEnd: { x: number; y: number } | null
 }
 
+//for mobile functionality
+// Add after other refs
+const isPanMode = ref(false) // false = draw mode, true = pan mode
+const lastTouchPos = ref<{ x: number; y: number } | null>(null)
+
 const undoStack = ref<CanvasState[]>([])
 const redoStack = ref<CanvasState[]>([])
 
@@ -392,6 +408,80 @@ function toggleRightSidebar() {
 function closeSidebars() {
   leftSidebarOpen.value = false
   rightSidebarOpen.value = false
+}
+
+//Mobile helper
+// Toggle between draw and pan mode
+function toggleMode() {
+  isPanMode.value = !isPanMode.value
+  saveMessage.value = isPanMode.value ? 'Pan Mode: Move canvas with finger' : 'Draw Mode: Draw with finger'
+  setTimeout(() => {
+    if (saveMessage.value === 'Pan Mode: Move canvas with finger' || saveMessage.value === 'Draw Mode: Draw with finger') {
+      saveMessage.value = ''
+    }
+  }, 1500)
+}
+
+// Handle touch start for drawing/panning
+function handleTouchStart(e: TouchEvent) {
+  e.preventDefault()
+  const touch = e.touches[0]
+  const rect = canvas.value?.getBoundingClientRect()
+  if (!rect) return
+  
+
+  
+  if (isPanMode.value) {
+    lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
+  } else {
+    // Simulate mouse down for drawing
+    const mouseEvent = new MouseEvent('mousedown', {
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      bubbles: true
+    })
+    canvas.value?.dispatchEvent(mouseEvent)
+  }
+}
+
+// Handle touch move for drawing/panning
+function handleTouchMove(e: TouchEvent) {
+  e.preventDefault()
+  const touch = e.touches[0]
+  const rect = canvas.value?.getBoundingClientRect()
+  if (!rect) return
+  
+  if (isPanMode.value && lastTouchPos.value) {
+    // Pan mode - move the canvas
+    const dx = touch.clientX - lastTouchPos.value.x
+    const dy = touch.clientY - lastTouchPos.value.y
+    const pixelSize = CANVAS_SIZE / visibleSize.value
+    offsetX.value = Math.max(0, Math.min(gridSize.value - visibleSize.value, offsetX.value - Math.round(dx / pixelSize)))
+    offsetY.value = Math.max(0, Math.min(gridSize.value - visibleSize.value, offsetY.value - Math.round(dy / pixelSize)))
+    lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
+    redraw()
+    updatePreview()
+  } else {
+    // Draw mode - simulate mouse move
+    const mouseEvent = new MouseEvent('mousemove', {
+      clientX: touch.clientX,
+      clientY: touch.clientY,
+      bubbles: true
+    })
+    canvas.value?.dispatchEvent(mouseEvent)
+  }
+}
+
+// Handle touch end
+function handleTouchEnd(e: TouchEvent) {
+  e.preventDefault()
+  if (!isPanMode.value) {
+    const mouseEvent = new MouseEvent('mouseup', {
+      bubbles: true
+    })
+    canvas.value?.dispatchEvent(mouseEvent)
+  }
+  lastTouchPos.value = null
 }
 
 
@@ -1557,15 +1647,41 @@ function redraw() {
 }
 
 // MOUSE
-function getMousePos(e: MouseEvent) {
+// MOUSE - Fixed to account for CSS scaling
+function getMousePos(e: MouseEvent | TouchEvent) {
   if (!canvas.value) return null
+  
   const rect = canvas.value.getBoundingClientRect()
-  const pixelSize = CANVAS_SIZE / visibleSize.value
-
-  return {
-    x: Math.floor((e.clientX - rect.left) / pixelSize),
-    y: Math.floor((e.clientY - rect.top) / pixelSize),
+  const canvasActualSize = CANVAS_SIZE // 600px actual canvas resolution
+  const canvasDisplayWidth = rect.width // CSS display width
+  
+  // Calculate the scale factor between actual canvas resolution and displayed size
+  const scale = canvasActualSize / canvasDisplayWidth
+  
+  let clientX, clientY
+  
+  if (e instanceof TouchEvent) {
+    clientX = e.touches[0].clientX
+    clientY = e.touches[0].clientY
+  } else {
+    clientX = e.clientX
+    clientY = e.clientY
   }
+  
+  // Calculate position relative to canvas, then scale to actual canvas coordinates
+  let canvasX = (clientX - rect.left) * scale
+  let canvasY = (clientY - rect.top) * scale
+  
+  // Convert to grid coordinates
+  const pixelSize = CANVAS_SIZE / visibleSize.value
+  let x = Math.floor(canvasX / pixelSize)
+  let y = Math.floor(canvasY / pixelSize)
+  
+  // Clamp to visible area
+  x = Math.max(0, Math.min(visibleSize.value - 1, x))
+  y = Math.max(0, Math.min(visibleSize.value - 1, y))
+  
+  return { x, y }
 }
 
 function startDrawing(e: MouseEvent) {
@@ -1899,6 +2015,14 @@ watch(grid, () => {
   box-sizing: border-box;
 }
 
+
+html, body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  height: 100%;
+}
+
 .app-container {
   display: flex;
   flex-direction: column;
@@ -2051,7 +2175,7 @@ watch(grid, () => {
   width: 100%;
   padding: 10px;
   overflow: auto;
-  margin-top: 110px; /* Offset for navbar + toolbar */
+  margin-top: 10px; /* Offset for navbar + toolbar */
 }
 
 .middle {
@@ -2211,14 +2335,28 @@ input[type="color"] {
 }
 
 /* CANVAS - Responsive sizing */
+/* CANVAS - Fixed sizing to prevent offset */
 canvas {
+  width: 600px;
+  height: 600px;
   max-width: 100%;
   height: auto;
   cursor: crosshair;
   background: white;
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+  display: block;
+  margin: 0 auto;
 }
 
+/* Fix for mobile canvas scaling */
+@media (max-width: 768px) {
+  canvas {
+    width: 100%;
+    height: auto;
+    max-width: 500px;
+    touch-action: none;
+  }
+}
 /* Modal - Mobile friendly */
 .modal-overlay {
   position: fixed;
@@ -2512,6 +2650,89 @@ small {
     margin-top: 10px;
   }
 }
+
+
+/* Touch-specific styles */
+@media (max-width: 768px) {
+  canvas {
+    touch-action: none; /* Prevent scrolling when drawing */
+  }
+  
+  .mode-toggle {
+    position: fixed;
+    bottom: 80px;
+    right: 10px;
+    background: #0084ff;
+    padding: 12px;
+    border-radius: 50%;
+    width: 50px;
+    height: 50px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    z-index: 200;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  }
+  
+  .mode-toggle.active {
+    background: #ff9800;
+  }
+  
+  .mode-toggle.pan {
+    background: #ff9800;
+  }
+  
+  .mode-toggle.draw {
+    background: #0084ff;
+  }
+}
+
+
+
+
+
+/* Add to your existing CSS */
+@media (max-width: 768px) {
+  .arrow {
+    min-width: 60px;
+    min-height: 60px;
+    font-size: 28px;
+    touch-action: manipulation;
+  }
+  
+  .tool-btn {
+    min-width: 50px;
+    min-height: 50px;
+  }
+  
+  button {
+    touch-action: manipulation;
+  }
+  
+  .mode-toggle {
+    position: fixed;
+    bottom: 80px;
+    right: 10px;
+    background: #0084ff;
+    padding: 12px;
+    border-radius: 50%;
+    width: 55px;
+    height: 55px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 24px;
+    z-index: 200;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+    cursor: pointer;
+  }
+  
+  .mode-toggle.active {
+    background: #ff9800;
+  }
+}
+
 
 
 </style>
