@@ -123,7 +123,7 @@ function handleLogout() {
 }
 
 .logo-img {
-  height: 90px;
+  height: 70px;
   width: auto;
   object-fit: contain;
 }
@@ -133,6 +133,7 @@ function handleLogout() {
   display: flex;
   align-items: center;
   gap: 1rem;
+  margin-left: 60px;
 }
 
 .left {
@@ -174,10 +175,11 @@ function handleLogout() {
   color: #e0e0e0;
   text-decoration: none;
   font-weight: 500;
-  font-size: 0.95rem;
+  font-size: 1.15rem;
   transition: all 0.3s ease;
   border-radius: 8px;
   white-space: nowrap;
+  margin-left: 30px;
 }
 
 .nav-link:hover {
@@ -286,6 +288,7 @@ function handleLogout() {
   border: 2px solid rgba(46, 204, 46, 0.3);
   white-space: normal;
   display: block;
+  margin-left: 0px;
 }
 
 .nav-links-mobile .nav-link:active {

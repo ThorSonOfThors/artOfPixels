@@ -157,6 +157,11 @@
           {{ isPanMode ? '✋' : '✏️' }}
         </button>
 
+        <!-- Add after the mode-toggle button -->
+        <div v-if="!isPanMode && activePixels.length > 0 && tool === 'select'" class="selected-area-indicator">
+          ✨ Tap and drag to move selection
+        </div>
+
         <div class="middle">
           
 
@@ -172,13 +177,17 @@
             @touchend="handleTouchEnd"
             @touchcancel="handleTouchEnd"
           ></canvas>
-          <button class="arrow" @click="moveUp" @touchstart="moveUp">⬆️</button>
-          <button class="arrow" @click="moveLeft" @touchstart="moveLeft">⬅️</button>
-          <button class="arrow" @click="moveRight" @touchstart="moveRight">➡️</button>
-          <button class="arrow" @click="moveDown" @touchstart="moveDown">⬇️</button>
+          
 
           
         </div>
+
+        <div class="arrow-buttons">
+        <button class="arrow" @click="moveUp">⬆️</button>
+        <button class="arrow" @click="moveLeft">⬅️</button>
+        <button class="arrow" @click="moveRight">➡️</button>
+        <button class="arrow" @click="moveDown">⬇️</button>
+      </div>
        
       </div>
 
@@ -190,9 +199,6 @@
           class="preview-canvas"
           @click="jumpToPosition"
         ></canvas>
-        <div class="preview-controls">
-          <button @click="toggleMinimap">Hide</button>
-        </div>
       </div>
 
       <!-- Toggle preview button -->
@@ -396,6 +402,9 @@ const tempTextRect = ref<{ start: { x: number; y: number }, end: { x: number; y:
 const leftSidebarOpen = ref(false)
 const rightSidebarOpen = ref(false)
 
+let isMovingSelected = ref(false)
+let lastSelectedMovePos = ref<{ x: number; y: number } | null>(null)
+
 // Add these functions
 function toggleLeftSidebar() {
   leftSidebarOpen.value = !leftSidebarOpen.value
@@ -423,18 +432,38 @@ function toggleMode() {
 }
 
 // Handle touch start for drawing/panning
+// Replace your handleTouchStart function with this:
 function handleTouchStart(e: TouchEvent) {
   e.preventDefault()
   const touch = e.touches[0]
   const rect = canvas.value?.getBoundingClientRect()
   if (!rect) return
   
-
+  // Check if we're in select mode and have active pixels
+  if (!isPanMode.value && activePixels.length > 0 && tool.value === 'select') {
+    // Check if touch is within selected area
+    const pos = getMousePos(e)
+    if (pos) {
+      const gx = pos.x + offsetX.value
+      const gy = pos.y + offsetY.value
+      
+      // Check if the touched pixel is part of the selection
+      const isInSelection = activePixels.some(p => p.x === gx && p.y === gy)
+      
+      if (isInSelection) {
+        isMovingSelected.value = true
+        lastSelectedMovePos.value = { x: touch.clientX, y: touch.clientY }
+        // Prevent drawing from starting
+        return
+      }
+    }
+  }
   
   if (isPanMode.value) {
     lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
   } else {
-    // Simulate mouse down for drawing
+    // Only start drawing if we're not moving selected elements
+    drawing.value = true
     const mouseEvent = new MouseEvent('mousedown', {
       clientX: touch.clientX,
       clientY: touch.clientY,
@@ -451,6 +480,24 @@ function handleTouchMove(e: TouchEvent) {
   const rect = canvas.value?.getBoundingClientRect()
   if (!rect) return
   
+  // Handle moving selected elements
+  if (!isPanMode.value && isMovingSelected.value && lastSelectedMovePos.value) {
+    const dx = touch.clientX - lastSelectedMovePos.value.x
+    const dy = touch.clientY - lastSelectedMovePos.value.y
+    const pixelSize = CANVAS_SIZE / visibleSize.value
+    
+    // Calculate movement in grid units
+    const moveX = Math.round(dx / pixelSize)
+    const moveY = Math.round(dy / pixelSize)
+    
+    if (moveX !== 0 || moveY !== 0) {
+      saveState() // Save state before moving
+      moveActivePixels(moveX, moveY)
+      lastSelectedMovePos.value = { x: touch.clientX, y: touch.clientY }
+    }
+    return
+  }
+  
   if (isPanMode.value && lastTouchPos.value) {
     // Pan mode - move the canvas
     const dx = touch.clientX - lastTouchPos.value.x
@@ -461,8 +508,8 @@ function handleTouchMove(e: TouchEvent) {
     lastTouchPos.value = { x: touch.clientX, y: touch.clientY }
     redraw()
     updatePreview()
-  } else {
-    // Draw mode - simulate mouse move
+  } else if (!isPanMode.value && !isMovingSelected.value && drawing.value) {
+    // Draw mode - simulate mouse move only if drawing is active
     const mouseEvent = new MouseEvent('mousemove', {
       clientX: touch.clientX,
       clientY: touch.clientY,
@@ -473,14 +520,25 @@ function handleTouchMove(e: TouchEvent) {
 }
 
 // Handle touch end
+// Replace your handleTouchEnd function with this:
 function handleTouchEnd(e: TouchEvent) {
   e.preventDefault()
-  if (!isPanMode.value) {
+  
+  if (isMovingSelected.value) {
+    isMovingSelected.value = false
+    lastSelectedMovePos.value = null
+    updatePreview()
+    return
+  }
+  
+  if (!isPanMode.value && drawing.value) {
+    drawing.value = false
     const mouseEvent = new MouseEvent('mouseup', {
       bubbles: true
     })
     canvas.value?.dispatchEvent(mouseEvent)
   }
+  
   lastTouchPos.value = null
 }
 
@@ -1030,6 +1088,7 @@ function applyPixels(pixels: { x: number; y: number; color: string }[]) {
   }
 }
 
+// Replace your existing moveActivePixels function with this:
 function moveActivePixels(dx: number, dy: number) {
   if (activePixels.length === 0) return
 
@@ -1040,6 +1099,11 @@ function moveActivePixels(dx: number, dy: number) {
     p.y += dy
   }
 
+  // Filter out pixels that moved outside the grid
+  activePixels = activePixels.filter(p => 
+    p.x >= 0 && p.x < gridSize.value && p.y >= 0 && p.y < gridSize.value
+  )
+
   backgroundPixels = activePixels.map(p => ({
     x: p.x,
     y: p.y,
@@ -1049,6 +1113,7 @@ function moveActivePixels(dx: number, dy: number) {
   applyPixels(activePixels)
 
   redraw()
+  updatePreview()
 }
 
 function restoreBackground() {
@@ -1063,6 +1128,7 @@ function restoreBackground() {
     }
   }
 }
+
 
 //FILL
 function gradientFloodFill(startX: number, startY: number) {
@@ -1919,11 +1985,56 @@ function handleWheel(e: WheelEvent) {
   updatePreview()
 }
 
-function moveLeft() { offsetX.value--; clampOffset(); redraw(); updatePreview() }
-function moveRight() { offsetX.value++; clampOffset(); redraw(); updatePreview() }
-function moveUp() { offsetY.value--; clampOffset(); redraw(); updatePreview() }
-function moveDown() { offsetY.value++; clampOffset(); redraw(); updatePreview() }
+// Replace these functions:
+function moveLeft() { 
+  if (!isPanMode.value && activePixels.length > 0 && tool.value === 'select') {
+    saveState()
+    moveActivePixels(-1, 0)
+  } else {
+    offsetX.value--; 
+    clampOffset(); 
+    redraw(); 
+    updatePreview()
+  }
+}
 
+function moveRight() { 
+  if (!isPanMode.value && activePixels.length > 0 && tool.value === 'select') {
+    saveState()
+    moveActivePixels(1, 0)
+  } else {
+    offsetX.value++; 
+    clampOffset(); 
+    redraw(); 
+    updatePreview()
+  }
+}
+
+function moveUp() { 
+  if (!isPanMode.value && activePixels.length > 0 && tool.value === 'select') {
+    saveState()
+    moveActivePixels(0, -1)
+  } else {
+    offsetY.value--; 
+    clampOffset(); 
+    redraw(); 
+    updatePreview()
+  }
+}
+
+function moveDown() { 
+  if (!isPanMode.value && activePixels.length > 0 && tool.value === 'select') {
+    saveState()
+    moveActivePixels(0, 1)
+  } else {
+    offsetY.value++; 
+    clampOffset(); 
+    redraw(); 
+    updatePreview()
+  }
+}
+
+// Replace your existing handleKey function with this:
 function handleKey(e: KeyboardEvent) {
   if (e.ctrlKey && e.key === 'z') {
     undo()
@@ -1935,15 +2046,20 @@ function handleKey(e: KeyboardEvent) {
     return
   }
 
-  if (e.key === 'w') moveUp()
-  if (e.key === 's') moveDown()
-  if (e.key === 'a') moveLeft()
-  if (e.key === 'd') moveRight()
-
-  if (e.key === 'ArrowUp') moveActivePixels(0, -1)
-  if (e.key === 'ArrowDown') moveActivePixels(0, 1)
-  if (e.key === 'ArrowLeft') moveActivePixels(-1, 0)
-  if (e.key === 'ArrowRight') moveActivePixels(1, 0)
+  // Move viewport (always works in pan mode OR when no elements are selected)
+  if (isPanMode.value || activePixels.length === 0) {
+    if (e.key === 'w' || e.key === 'ArrowUp') moveUp()
+    if (e.key === 's' || e.key === 'ArrowDown') moveDown()
+    if (e.key === 'a' || e.key === 'ArrowLeft') moveLeft()
+    if (e.key === 'd' || e.key === 'ArrowRight') moveRight()
+  } 
+  // Move selected elements (only when NOT in pan mode AND elements are selected)
+  else if (!isPanMode.value && activePixels.length > 0) {
+    if (e.key === 'ArrowUp') moveActivePixels(0, -1)
+    if (e.key === 'ArrowDown') moveActivePixels(0, 1)
+    if (e.key === 'ArrowLeft') moveActivePixels(-1, 0)
+    if (e.key === 'ArrowRight') moveActivePixels(1, 0)
+  }
 }
 
 function clampOffset() {
@@ -2009,53 +2125,47 @@ watch(grid, () => {
 }, { deep: true })
 </script>
 
+
 <style scoped>
 /* Mobile First Base Styles */
 * {
   box-sizing: border-box;
 }
 
-
-html, body {
-  margin: 0;
-  padding: 0;
-  overflow: hidden;
-  height: 100%;
-}
-
 .app-container {
   display: flex;
   flex-direction: column;
   height: 100vh;
-  background: #1e1e1e;
-  color: #eee;
-  font-family: sans-serif;
+  background: linear-gradient(135deg, #0a0a0a 0%, #1a1a1a 100%);
+  color: #e0e0e0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   position: relative;
   overflow: hidden;
 }
 
-/* SIDEBARS - Hidden by default on mobile, accessible via buttons */
+/* SIDEBARS */
 .sidebar {
   position: fixed;
   top: 0;
   bottom: 0;
   width: 85%;
   max-width: 280px;
-  background: #2a2a2a;
-  padding: 15px;
+  background: linear-gradient(180deg, #1a1a2e 0%, #0f0f1a 100%);
+  backdrop-filter: blur(10px);
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   overflow-y: auto;
   z-index: 1000;
   transition: transform 0.3s ease;
-  box-shadow: 2px 0 8px rgba(0,0,0,0.3);
+  box-shadow: 5px 0 20px rgba(0,0,0,0.5);
+  border-right: 1px solid rgba(76, 175, 80, 0.2);
 }
 
 .sidebar.left {
   left: 0;
   transform: translateX(-100%);
-  border-right: 1px solid #444;
 }
 
 .sidebar.left.open {
@@ -2065,57 +2175,65 @@ html, body {
 .sidebar.right {
   right: 0;
   transform: translateX(100%);
-  border-left: 1px solid #444;
+  border-left: 1px solid rgba(76, 175, 80, 0.2);
+  border-right: none;
 }
 
 .sidebar.right.open {
   transform: translateX(0);
 }
 
-/* Sidebar toggle buttons for mobile */
-/* Sidebar toggle buttons for mobile - Positioned below toolbar */
-.menu-toggle {
+.sidebar h3 {
+  margin-top: 5px;
+  margin-bottom: 8px;
+  font-size: 14px;
+  color: #4CAF50;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  font-weight: 600;
+}
+
+/* Sidebar toggle buttons */
+.menu-toggle,
+.right-menu-toggle {
   position: fixed;
-  top: 140px; /* Below navbar (adjust based on your navbar height) */
-  left: 10px;
+  top: 140px;
   z-index: 102;
-  background: #0084ff;
-  padding: 8px 12px;
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+  padding: 10px 14px;
   font-size: 20px;
-  border-radius: 8px;
+  border-radius: 12px;
+  border: none;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  transition: all 0.2s ease;
+}
+
+.menu-toggle {
+  left: 10px;
 }
 
 .right-menu-toggle {
-  position: fixed;
-  top: 140px; /* Below navbar (adjust based on your navbar height) */
   left: 70px;
-  z-index: 102;
-  background: #0084ff;
-  padding: 8px 12px;
-  font-size: 20px;
-  border-radius: 8px;
 }
 
-/* Overlay when sidebar is open */
+.menu-toggle:active,
+.right-menu-toggle:active {
+  transform: scale(0.95);
+  box-shadow: 0 2px 6px rgba(76, 175, 80, 0.4);
+}
+
 .sidebar-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0,0,0,0.5);
+  background: rgba(0,0,0,0.7);
+  backdrop-filter: blur(4px);
   z-index: 999;
 }
 
-.sidebar h3 {
-  margin-top: 10px;
-  margin-bottom: 5px;
-  font-size: 14px;
-  color: #bbb;
-}
-
-/* CENTER - Takes full width on mobile */
-/* CENTER - Takes full width on mobile */
+/* CENTER */
 .center {
   display: flex;
   flex-direction: column;
@@ -2125,22 +2243,17 @@ html, body {
   flex: 1;
   width: 100%;
   overflow: hidden;
-  padding-top: 60px; /* Space for mobile menu buttons */
+  padding-top: 60px;
 }
 
-/* Add this new class for navbar offset */
-.navbar-offset {
-  padding-top: 70px; /* Space for fixed navbar on mobile */
-}
-
-/* TOOLBAR - Horizontal scrollable on mobile */
-/* TOOLBAR - Horizontal scrollable on mobile */
+/* TOOLBAR - Horizontal scrolling on all devices, no wrapping */
 .toolbar {
   display: flex;
-  gap: 8px;
-  padding: 8px;
-  background: #333;
-  border-bottom: 1px solid #444;
+  gap: 10px;
+  padding: 10px 16px;
+  background: rgba(26, 26, 46, 0.95);
+  backdrop-filter: blur(10px);
+  border-bottom: 1px solid rgba(76, 175, 80, 0.3);
   width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2148,55 +2261,58 @@ html, body {
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   position: fixed;
-  top: 60px; /* Push below navbar (adjust based on your navbar height) */
+  top: 60px;
   left: 0;
   right: 0;
   z-index: 50;
+  /* Critical: Prevent wrapping on desktop */
+  flex-wrap: nowrap;
 }
 
 .toolbar::-webkit-scrollbar {
-  height: 3px;
+  height: 4px;
+}
+
+.toolbar::-webkit-scrollbar-track {
+  background: #2a2a2a;
+}
+
+.toolbar::-webkit-scrollbar-thumb {
+  background: #4CAF50;
+  border-radius: 4px;
 }
 
 .tool-group {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   flex-shrink: 0;
+  background: rgba(0,0,0,0.3);
+  padding: 5px 12px;
+  border-radius: 50px;
 }
 
-/* CANVAS WRAPPER - Responsive */
-.canvas-wrapper {
-  flex: 1;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  padding: 10px;
-  overflow: auto;
-  margin-top: 10px; /* Offset for navbar + toolbar */
-}
-
-.middle {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-wrap: wrap;
-}
-
-/* BUTTONS - Larger touch targets */
+/* BUTTONS - Premium Green Theme */
 button {
-  background: #444;
-  color: white;
-  border: none;
-  padding: 10px 12px;
+  background: linear-gradient(135deg, #2a2a3e 0%, #1a1a2e 100%);
+  color: #e0e0e0;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  padding: 10px 14px;
   cursor: pointer;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 16px;
   min-width: 44px;
   min-height: 44px;
   touch-action: manipulation;
+  transition: all 0.2s ease;
+  font-weight: 500;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+button:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.2);
+  border-color: rgba(76, 175, 80, 0.6);
 }
 
 button:active {
@@ -2204,7 +2320,10 @@ button:active {
 }
 
 button.active {
-  background: #0084ff;
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+  color: white;
+  border-color: #4CAF50;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
 }
 
 /* TOOL BUTTONS */
@@ -2214,32 +2333,175 @@ button.active {
   font-size: 20px;
 }
 
-/* ARROWS - Navigation buttons */
-.arrow {
-  margin: 5px;
-  font-size: 24px;
-  padding: 12px;
-  min-width: 50px;
+/* Square and Circle tool styling */
+.tool-btn.square {
+  position: relative;
 }
 
-/* INPUTS - Mobile friendly */
+.tool-btn.square.fill::before {
+  content: "■";
+  font-size: 24px;
+}
+
+.tool-btn.square.edge::before {
+  content: "□";
+  font-size: 24px;
+}
+
+.tool-btn.square.off::before {
+  content: "▯";
+  font-size: 24px;
+  opacity: 0.5;
+}
+
+.tool-btn.circle.fill::before {
+  content: "●";
+  font-size: 24px;
+}
+
+.tool-btn.circle.edge::before {
+  content: "○";
+  font-size: 24px;
+}
+
+.tool-btn.circle.off::before {
+  content: "◯";
+  font-size: 24px;
+  opacity: 0.5;
+}
+
+/* Active state for shape tools */
+.tool-btn.square.active,
+.tool-btn.circle.active {
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+  transform: scale(1.02);
+  box-shadow: 0 0 15px rgba(76, 175, 80, 0.5);
+}
+
+/* CANVAS WRAPPER */
+.canvas-wrapper {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  overflow: hidden ;
+  margin-top: 10px;
+  margin-bottom: 10px;
+}
+
+.middle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* Arrow buttons container - UNDER the canvas */
+.arrow-buttons {
+  display: flex;
+  flex-direction: row;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 5px;
+}
+
+/* ARROWS - Small compact buttons */
+.arrow {
+  background: linear-gradient(135deg, #2a2a3e 0%, #1a1a2e 100%);
+  border: 1px solid rgba(76, 175, 80, 0.4);
+  font-size: 16px;
+  padding: 6px;
+  width: 38px;
+  height: 38px;
+  min-width: 38px;
+  min-height: 38px;
+  border-radius: 10px;
+  transition: all 0.2s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+}
+
+.arrow:active {
+  transform: scale(0.95);
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+}
+
+/* Hide arrows on desktop */
+@media (min-width: 769px) {
+  .arrow-buttons {
+    display: none;
+  }
+}
+
+/* Mobile arrow sizes */
+@media (max-width: 768px) {
+  .arrow {
+    width: 42px;
+    height: 42px;
+    min-width: 42px;
+    min-height: 42px;
+    font-size: 18px;
+    padding: 8px;
+  }
+  
+  .arrow-buttons {
+    gap: 10px;
+  }
+}
+
+/* Small mobile devices */
+@media (max-width: 480px) {
+  .arrow {
+    width: 38px;
+    height: 38px;
+    min-width: 38px;
+    min-height: 38px;
+    font-size: 16px;
+    padding: 6px;
+  }
+  
+  .arrow-buttons {
+    gap: 8px;
+  }
+}
+
+/* INPUTS */
 input[type="number"] {
   width: 70px;
   padding: 8px;
   font-size: 14px;
-  border-radius: 6px;
-  border: 1px solid #555;
-  background: #444;
-  color: white;
+  border-radius: 8px;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  background: #1a1a2e;
+  color: #e0e0e0;
+  transition: all 0.2s ease;
+}
+
+input[type="number"]:focus {
+  outline: none;
+  border-color: #4CAF50;
+  box-shadow: 0 0 8px rgba(76, 175, 80, 0.3);
 }
 
 input[type="color"] {
   width: 48px;
   height: 48px;
   padding: 0;
-  border: none;
+  border: 2px solid rgba(76, 175, 80, 0.3);
+  border-radius: 10px;
   background: none;
   cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+input[type="color"]:hover {
+  border-color: #4CAF50;
+  transform: scale(1.05);
 }
 
 /* BRUSH CONTROLS */
@@ -2247,15 +2509,17 @@ input[type="color"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #3a3a3a;
-  padding: 5px 10px;
-  border-radius: 8px;
+  background: rgba(0,0,0,0.3);
+  padding: 5px 12px;
+  border-radius: 50px;
 }
 
 .brush span {
   min-width: 30px;
   text-align: center;
   font-size: 16px;
+  font-weight: 600;
+  color: #4CAF50;
 }
 
 /* SPRAY & TOLERANCE CONTROLS */
@@ -2263,57 +2527,40 @@ input[type="color"] {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  background: #3a3a3a;
-  padding: 5px 10px;
-  border-radius: 8px;
+  background: rgba(0,0,0,0.3);
+  padding: 5px 12px;
+  border-radius: 50px;
 }
 
 .spray-control input, .tolerance-control input {
   width: 100px;
 }
 
-/* PREVIEW WINDOW - Mobile optimized */
+/* PREVIEW WINDOW */
 .preview-window {
   position: fixed;
   bottom: 10px;
   right: 10px;
-  background: #2a2a2a;
-  border: 2px solid #444;
-  border-radius: 8px;
-  padding: 8px;
+  background: black;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 12px;
+  padding: 10px;
   z-index: 200;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.5);
-  max-width: calc(100% - 20px);
-}
-
-.preview-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 6px;
-  font-size: 11px;
-  color: #ccc;
-}
-
-.close-preview {
-  background: #444;
-  padding: 4px 8px;
-  font-size: 12px;
-  min-width: auto;
-  min-height: auto;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.4);
 }
 
 .preview-canvas {
-  width: 120px;
-  height: 120px;
+  width: 100px;
+  height: 100px;
   cursor: pointer;
-  border: 1px solid #555;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 8px;
   image-rendering: crisp-edges;
   image-rendering: pixelated;
 }
 
 .preview-controls {
-  margin-top: 6px;
+  margin-top: 8px;
   text-align: center;
 }
 
@@ -2321,7 +2568,7 @@ input[type="color"] {
   position: fixed;
   bottom: 10px;
   right: 10px;
-  background: #0084ff;
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
   padding: 12px;
   font-size: 20px;
   z-index: 201;
@@ -2331,11 +2578,10 @@ input[type="color"] {
   display: flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
 }
 
-/* CANVAS - Responsive sizing */
-/* CANVAS - Fixed sizing to prevent offset */
+/* CANVAS - Desktop 90% scaling */
 canvas {
   width: 600px;
   height: 600px;
@@ -2343,28 +2589,20 @@ canvas {
   height: auto;
   cursor: crosshair;
   background: white;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.2);
   display: block;
   margin: 0 auto;
+  transition: all 0.2s ease;
 }
 
-/* Fix for mobile canvas scaling */
-@media (max-width: 768px) {
-  canvas {
-    width: 100%;
-    height: auto;
-    max-width: 500px;
-    touch-action: none;
-  }
-}
-/* Modal - Mobile friendly */
+/* Modal */
 .modal-overlay {
   position: fixed;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: rgba(0, 0, 0, 0.9);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -2373,29 +2611,32 @@ canvas {
 }
 
 .modal {
-  background: #2a2a2a;
-  padding: 20px;
-  border-radius: 12px;
+  background: linear-gradient(135deg, #1a1a2e 0%, #0f0f1a 100%);
+  padding: 24px;
+  border-radius: 16px;
   width: 100%;
   max-width: 400px;
   max-height: 90vh;
   overflow-y: auto;
-  color: #eee;
+  color: #e0e0e0;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  box-shadow: 0 20px 40px rgba(0,0,0,0.4);
 }
 
 .modal h3 {
   margin-top: 0;
-  font-size: 18px;
+  font-size: 20px;
+  color: #4CAF50;
 }
 
 .modal textarea {
   width: 100%;
-  padding: 10px;
-  margin: 10px 0;
-  background: #444;
-  color: white;
-  border: 1px solid #666;
-  border-radius: 8px;
+  padding: 12px;
+  margin: 12px 0;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 10px;
   font-family: monospace;
   resize: vertical;
   font-size: 14px;
@@ -2409,16 +2650,17 @@ canvas {
   display: block;
   margin: 12px 0;
   font-size: 14px;
+  color: #4CAF50;
 }
 
 .modal-controls input,
 .modal-controls select {
   margin-left: 10px;
   padding: 8px;
-  background: #444;
-  color: white;
-  border: 1px solid #666;
-  border-radius: 6px;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  border: 1px solid rgba(76, 175, 80, 0.3);
+  border-radius: 8px;
   font-size: 14px;
 }
 
@@ -2434,44 +2676,149 @@ canvas {
   font-size: 14px;
 }
 
-small {
-  display: block;
-  font-size: 11px;
-  color: #aaa;
-  margin-top: 4px;
+/* Selected area indicator */
+.selected-area-indicator {
+  position: fixed;
+  bottom: 140px;
+  right: 10px;
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+  padding: 8px 14px;
+  border-radius: 20px;
+  font-size: 12px;
+  z-index: 200;
+  pointer-events: none;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.3);
+  color: white;
 }
 
-/* Simple text indicators */
-.tool-btn.square.fill::before,
-.tool-btn.square.edge::before,
-.tool-btn.square.off::before,
-.tool-btn.circle.fill::before,
-.tool-btn.circle.edge::before,
-.tool-btn.circle.off::before {
-  font-size: 22px;
+/* Mode toggle button */
+.mode-toggle {
+  position: fixed;
+  bottom: 80px;
+  right: 10px;
+  background: linear-gradient(135deg, #4CAF50 0%, #2E7D32 100%);
+  padding: 12px;
+  border-radius: 50%;
+  width: 55px;
+  height: 55px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24px;
+  z-index: 200;
+  box-shadow: 0 4px 12px rgba(76, 175, 80, 0.4);
+  cursor: pointer;
+  border: none;
 }
 
-/* Active state */
-.tool-btn.square.active,
-.tool-btn.circle.active {
-  outline: 2px solid white;
-  outline-offset: 2px;
-  transform: scale(1.05);
+.mode-toggle.pan {
+  background: linear-gradient(135deg, #FF9800 0%, #F57C00 100%);
 }
 
-/* Utility classes */
-.hidden-mobile {
-  display: none;
+/* Mobile specific styles */
+@media (max-width: 768px) {
+  canvas {
+    width: 100%;
+    height: auto;
+    max-width: 500px;
+    touch-action: none;
+  }
+  
+  .tool-btn {
+    min-width: 48px;
+    min-height: 48px;
+  }
+  
+  .arrow-buttons {
+    margin-top: 15px;
+  }
 }
 
-/* Tablet and Desktop styles */
-@media (min-width: 768px) {
+/* Desktop styles - Keep everything in one horizontal line */
+@media (min-width: 769px) {
   .app-container {
     display: grid;
-    grid-template-columns: 220px 1fr 220px;
+    grid-template-columns: 260px 1fr 260px;
     flex-direction: row;
   }
   
+  /* Scale canvas to 90% on desktop */
+  canvas {
+    width: 540px !important;
+    height: 540px !important;
+  }
+  
+  /* Scale preview window */
+  .preview-window {
+    transform: scale(0.3);
+    transform-origin: bottom right;
+  }
+  
+  /* Scale tool buttons slightly */
+  .tool-btn {
+    width: 40px;
+    height: 40px;
+    font-size: 18px;
+  }
+  
+  button {
+    padding: 8px 12px;
+    font-size: 14px;
+  }
+  
+  /* Make buttons in tool groups more compact to fit in one line */
+  .tool-group {
+    padding: 5px 8px;
+    gap: 6px;
+  }
+  
+  /* Slightly reduce button sizes in tool groups for better fit */
+  .tool-group button {
+    padding: 6px 10px;
+    min-width: 36px;
+    min-height: 36px;
+    font-size: 13px;
+  }
+  
+  .tool-group .tool-btn {
+    width: 36px;
+    height: 36px;
+    font-size: 16px;
+  }
+  
+  /* Make brush controls more compact */
+  .brush {
+    padding: 3px 8px;
+  }
+  
+  .brush span {
+    min-width: 24px;
+    font-size: 13px;
+  }
+  
+  .brush button {
+    padding: 4px 8px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+  
+  /* Compact color inputs */
+  .tool-group input[type="color"] {
+    width: 36px;
+    height: 36px;
+  }
+  
+  /* Compact spray and tolerance controls */
+  .spray-control, .tolerance-control {
+    padding: 3px 8px;
+  }
+  
+  .spray-control input, .tolerance-control input {
+    width: 70px;
+  }
+  
+  /* Hide mobile toggles */
   .menu-toggle,
   .right-menu-toggle {
     display: none;
@@ -2502,46 +2849,33 @@ small {
     padding-top: 0;
   }
   
+  /* Toolbar stays horizontal with scrolling if needed - NO WRAPPING */
   .toolbar {
     position: relative;
     top: auto;
     left: auto;
     right: auto;
-    overflow-x: visible;
-    flex-wrap: wrap;
-    white-space: normal;
+    overflow-x: auto;
+    flex-wrap: nowrap; /* Critical: prevents wrapping */
+    white-space: nowrap;
+    justify-content: flex-start;
   }
   
+  /* Ensure tool groups don't wrap internally */
   .tool-group {
-    display: flex;
-    flex-wrap: wrap;
-  }
-  
-  button {
-    padding: 6px 10px;
-    min-width: auto;
-    min-height: auto;
-  }
-  
-  .tool-btn {
-    width: 40px;
-    height: 40px;
-    font-size: 18px;
-  }
-  
-  .arrow {
-    font-size: 18px;
-    padding: 6px 10px;
+    display: inline-flex;
+    flex-wrap: nowrap;
+    white-space: nowrap;
   }
   
   .preview-window {
     bottom: 20px;
-    right: 240px;
+    right: 43vh;
   }
   
   .preview-canvas {
-    width: 150px;
-    height: 150px;
+    width: 135px;
+    height: 135px;
   }
   
   .toggle-preview {
@@ -2549,190 +2883,35 @@ small {
     right: 20px;
   }
   
-  input[type="color"] {
-    width: 32px;
-    height: 32px;
+  .selected-area-indicator {
+    bottom: 100px;
+    right: 20px;
+  }
+  
+  .mode-toggle {
+    bottom: 100px;
+    right: 20px;
   }
 }
 
-/* Small mobile devices */
-@media (max-width: 480px) {
-  .tool-group {
-    gap: 4px;
-  }
-  
-  button {
-    padding: 8px 10px;
-    font-size: 14px;
-  }
-  
-  .tool-btn {
-    width: 42px;
-    height: 42px;
-    font-size: 18px;
-  }
-  
-  .brush span {
-    min-width: 25px;
-  }
-  
-  .spray-control input, 
-  .tolerance-control input {
-    width: 70px;
-  }
-  
-  .preview-canvas {
-    width: 100px;
-    height: 100px;
-  }
-  
-  .modal {
-    padding: 16px;
-  }
-}
-
-
-
-/* Mobile - Move arrows under the grid */
-@media (max-width: 768px) {
-  .canvas-wrapper {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-  }
-  
-  /* Reorder the arrows to be under the grid */
-  .canvas-wrapper .arrow:first-child {
-    order: 3; /* Up arrow goes to bottom */
-  }
-  
-  .middle {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    order: 2;
-  }
-  
-  /* Move the bottom arrow to the bottom */
-  .canvas-wrapper .arrow:last-child {
-    order: 4;
-    margin-top: 10px;
-  }
-  
-  /* Ensure canvas stays in middle */
-  .middle canvas {
-    order: 1;
-  }
-  
-  /* Style the arrow buttons on mobile */
-  .arrow {
-    margin: 5px auto;
-    width: 60px;
-  }
-  
-  /* Horizontal arrows inside middle */
-  .middle .arrow {
-    display: inline-block;
-    margin: 0 10px;
-  }
-  
-  /* Make arrow layout vertical on mobile */
-  .middle {
-    flex-direction: column;
-  }
-  
-  .middle .arrow:first-child {
-    margin-bottom: 10px;
-  }
-  
-  .middle .arrow:last-child {
-    margin-top: 10px;
-  }
-}
-
-
-/* Touch-specific styles */
-@media (max-width: 768px) {
+/* Extra large desktop - allow more breathing room */
+@media (min-width: 1400px) {
   canvas {
-    touch-action: none; /* Prevent scrolling when drawing */
+    width: 600px !important;
+    height: 600px !important;
   }
   
-  .mode-toggle {
-    position: fixed;
-    bottom: 80px;
-    right: 10px;
-    background: #0084ff;
-    padding: 12px;
-    border-radius: 50%;
-    width: 50px;
-    height: 50px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 20px;
-    z-index: 200;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+  /* On very large screens, buttons can be slightly larger */
+  .tool-group button {
+    padding: 8px 12px;
+    min-width: 40px;
+    min-height: 40px;
   }
   
-  .mode-toggle.active {
-    background: #ff9800;
-  }
-  
-  .mode-toggle.pan {
-    background: #ff9800;
-  }
-  
-  .mode-toggle.draw {
-    background: #0084ff;
+  .tool-group .tool-btn {
+    width: 40px;
+    height: 40px;
   }
 }
-
-
-
-
-
-/* Add to your existing CSS */
-@media (max-width: 768px) {
-  .arrow {
-    min-width: 60px;
-    min-height: 60px;
-    font-size: 28px;
-    touch-action: manipulation;
-  }
-  
-  .tool-btn {
-    min-width: 50px;
-    min-height: 50px;
-  }
-  
-  button {
-    touch-action: manipulation;
-  }
-  
-  .mode-toggle {
-    position: fixed;
-    bottom: 80px;
-    right: 10px;
-    background: #0084ff;
-    padding: 12px;
-    border-radius: 50%;
-    width: 55px;
-    height: 55px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 24px;
-    z-index: 200;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    cursor: pointer;
-  }
-  
-  .mode-toggle.active {
-    background: #ff9800;
-  }
-}
-
-
-
 </style>
+
